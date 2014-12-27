@@ -1,0 +1,277 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+
+# True radar LoS
+# use (earthradius*4/3) as R, calculate horizon=sqrt(2*R*A+A*A) per unit
+
+use Getopt::Std;
+use YAML::XS;
+use Geo::Ellipsoid;
+use List::Util qw(max min);
+use Math::Trig;
+use HTML::Template;
+
+my %o;
+getopts('ds',\%o);
+# -d include depth bands
+# -s shade rather than label depth bands
+
+my %horizon=(
+  VH => 350,
+  H => 231.5,
+  M => 96,
+  L => 39,
+  NoE => 12,
+  VL => 12,
+  large => 14,
+  medium => 12,
+  small => 9.5,
+  vsmall => 9.5,
+);
+
+my $geo=Geo::Ellipsoid->new(units=>'degrees');
+my $nm=1852;
+my $yard=0.9144;
+open DEPTH,'<','map/ETOPO1/etopo1_bed_g_f4.flt';
+binmode DEPTH;
+
+my $y=yaml_load_file($ARGV[0]);
+(my $stub=$ARGV[0]) =~ s/\.yaml$//;
+my $outpath='.';
+if ($stub =~ /(.*)\/([^\/]+)/) {
+  $outpath=$1;
+  $stub=$2;
+}
+my @rt;
+my @eu;
+my @eut;
+foreach my $toside (sort keys %{$y->{units}}) {
+  foreach my $tounit (@{$y->{units}{$toside}}) {
+    my $eu0=(keys %{$tounit})[0];
+    my $eu1=$tounit->{$eu0};
+    $eu1->{label}=$eu1->{short} || substr(uc($eu0),0,3);
+    if (exists $eu1->{foreignshort}) {
+      $eu1->{label}.='/'.$eu1->{foreignshort};
+    }
+    push @eu,$tounit;
+    push @eut,{id => $eu1->{label},name => $eu0};
+  }
+}
+my @fu;
+foreach my $fs (sort keys %{$y->{units}}) {
+  push @fu,@{$y->{units}{$fs}};
+}
+foreach my $fromunit (@fu) {
+  my $fu0=(keys %{$fromunit})[0];
+  my $fu1=$fromunit->{$fu0};
+  my $horizon=0;
+  my %line=(id => $fu1->{label},
+            name => $fu0,
+            speed => $fu1->{speed} || 0,
+            course => $fu1->{course},
+              );
+  my @row;
+  if (exists $fu1->{depth}) {
+    $line{height}=abs($fu1->{depth}).'['.unitband(-abs($fu1->{depth})).']/'.abs(getdepth(map {$_*60} locparse($fu1)));
+    $horizon=-1e9
+  } elsif (exists $fu1->{altitude}) {
+    $line{height}=$fu1->{altitude}.'['.unitband($fu1->{altitude}).']/'.max(0,getdepth(map {$_*60} locparse($fu1)));
+    $horizon=$horizon{unitband($fu1->{altitude})};
+  } else {
+    $horizon=$horizon{$fu1->{size}};
+  }
+  foreach my $enemy (@eu) {
+    my $eu0=(keys %{$enemy})[0];
+    my $eu1=$enemy->{$eu0};
+    if ($fu0 eq $eu0) {
+      push @row,{range => '',bearing => ''};
+    } else {
+      my ($range,$bearing)=$geo->to(
+        locparse($fu1),
+        locparse($eu1),
+          );
+      $range/=$nm;
+      my $relative=$bearing-$fu1->{course};
+      while ($relative<-180) {
+        $relative+=360;
+      }
+      while ($relative>180) {
+        $relative-=360;
+      }
+      my $relcol;
+      if ($relative>0) {
+        $relative="s".int($relative+0.5);
+        $relcol='#00c000';
+      } else {
+        $relative="p".int(abs($relative)+0.5);
+        $relcol='#c00000';
+      }
+      my $hz=0;
+      if (exists $eu1->{depth}) {
+        $hz=-1e9;
+      } elsif (exists $eu1->{altitude}) {
+        $hz=$horizon{unitband($eu1->{altitude})};
+      } else {
+        $hz=$horizon{$eu1->{size}};
+      }
+      my $rth=2;
+      if ($horizon+$hz>0) {
+        $rth=$range/($horizon+$hz);
+      }
+      my $colour;
+      if ($rth>1.5) {
+        $colour='#808080';
+      } elsif ($rth>1.35) {
+        $colour='#ff0000';
+      } elsif ($rth>1.2) {
+        $colour='#c0c000';
+      } elsif ($rth>1) {
+        $colour='#00ff00';
+      } else {
+        $colour='#ffffff';
+      }
+      push @row,{range => sprintf('%.1f',$range),
+                 colour => $colour,
+                 bearing => int($bearing+0.5),
+                 relative => $relative,
+                 relcol => $relcol};
+    }
+  }
+  $line{enemyunit}=\@row;
+  push @rt,\%line;
+}
+my $tmpl=HTML::Template->new(arrayref => [<DATA>],
+                             die_on_bad_params => 0);
+  $tmpl->param(enemyunit => \@eut,
+               rangetable => \@rt,
+               stub => $stub);
+  open OUT,'>:encoding(UTF-8)',"$outpath/$stub.rangetab.html";
+  print OUT $tmpl->output;
+  close OUT;
+close DEPTH;
+
+sub yaml_load_file {
+  my $file=shift;
+  open (I,'<',$file) || die "Can't load $file\n";
+  my $data=join('',<I>);
+  close I;
+  my $r=Load($data) || die "Can't decode $file\n";
+  return $r;
+}
+
+sub locparse {
+  my $h=shift @_;
+  if (exists $h->{lat} && exists $h->{lon}) {
+    return ($h->{lat},$h->{lon});
+  } elsif (exists $h->{loc}) {
+    if ($h->{loc} =~ /^\s*([-.0-9]+),\s*([-.0-9]+)\s*\+\s*([-.0-9]+)\s*\@\s*([-.0-9]+)\s*$/) {
+      return $geo->at($1,$2,$3*$nm,$4);
+    } elsif ($h->{loc} =~ /^\s*([-.0-9]+),\s*([-.0-9]+)\s*$/) {
+      return ($1,$2);
+    } else {
+      die "Bad loc\n".Dump($h);
+    }
+  } else {
+    die "Bad input\n".Dump($h);
+  }
+}
+
+sub getdepth {
+  my ($mlat,$mlon)=@_;
+  use bigint;
+  my $offset=4*(($mlon+10800)+(5400-$mlat)*21601);
+  seek DEPTH,$offset,0;
+  my $r;
+  read DEPTH,$r,4;
+  return unpack('f',$r);
+}
+
+sub mapband {
+  my $d=shift;
+  my $band;
+  if ($d>=-9.144) {             # no submarines at all
+    $band='S1';
+  } elsif ($d>=-36.576) {       # submarines only on surface
+    $band='S2';
+  } elsif ($d>=-50) {           # normal shallow
+    $band='S3';
+  } elsif ($d>=-500) {
+    $band='I'.(1+int((-1-$d)/100));
+  } elsif ($d>=-1200) {
+    $band='D'.(int((-1-$d)/150)-2);
+  } else {
+    $band='VD';
+  }
+  return $band;
+}
+
+sub shadeband {
+  my $d=shift;
+  my $band;
+  if ($d>=-9.144) {             # no submarines at all
+    $band='x';
+  } elsif ($d>=-50) {           # normal shallow
+    $band='S';
+  } elsif ($d>=-500) {
+    $band='I';
+  } elsif ($d>=-1200) {
+    $band='D';
+  } else {
+    $band='V';
+  }
+  return $band;
+}
+
+sub unitband {
+  my $d=shift;
+  my $band;
+  if ($d>13500) {
+    $band='VH';
+  } elsif ($d>7500) {
+    $band='H';
+  } elsif ($d>2000) {
+    $band='M';
+  } elsif ($d>100) {
+    $band='L';
+  } elsif ($d>30) {
+    $band='NoE';
+  } elsif ($d>0) {
+    $band='VL';
+  } elsif ($d>=-25) {
+    $band='P';
+  } elsif ($d>=-50) {
+    $band='S';
+  } elsif ($d>=-500) {
+    $band='I'.(1+int((-1-$d)/100));
+  } elsif ($d>=-1200) {
+    $band='D'.(int((-1-$d)/150)-2);
+  } else {
+    $band='VD';
+  }
+  return $band;
+}
+
+__DATA__
+<html>
+<head>
+<meta charset="utf-8">
+<title><tmpl_var name=stub escape=html> <tmpl_var name=side escape=html></title></head>
+<body>
+<table border=1>
+<tr><td><i>name</i></td><td><i>course</i><td><i>speed</i><td><i>alt/depth</i></td><tmpl_loop name=enemyunit><td colspan=2><tmpl_var name=id></td></tmpl_loop></tr>
+<tmpl_loop name=rangetable>
+<tr><td><tmpl_var name=id>: <tmpl_var name=name></td>
+<td><tmpl_var name=course>&deg;</td>
+<td><tmpl_var name=speed></td>
+<td><tmpl_if name=height><tmpl_var name=height></tmpl_if></td>
+<tmpl_loop name=enemyunit>
+<td bgcolor="<tmpl_var name=colour>"><tmpl_var name=range></td>
+<td bgcolor="<tmpl_var name=colour>"><tmpl_if name=relative><tmpl_var name=bearing>&deg; [<tmpl_var name=relative>]</tmpl_if></td>
+</tmpl_loop>
+</tr>
+</tmpl_loop>
+</table>
+</body>
+</html>

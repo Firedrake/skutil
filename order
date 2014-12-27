@@ -1,0 +1,428 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+
+# orders should be in one section at the top, VDQ: P45 18kt or whatever
+# orders:
+# #: go # yards (if #>=100) or # nauticalmiles
+# #kt: change speed to # knots
+# #T: change course to # true
+# P# or L#: change course to port by #
+# S# or R#: change course to starboard by #
+# #s or #m: proceed at current course/speed for N seconds/minutes
+# A+#/A-#/A#: change or set altitude in metres
+# D+#/D-#/D#: change or set depth in metres
+# T#: change throttle rate to # (or 1/#, whichever is >=1)
+# air units need: consumption (kg/nm), maxspeed (knot), throttle (0-inf)
+
+use List::Util qw(min);
+use Math::Trig;
+use Geo::Ellipsoid;
+use YAML::XS;
+use Getopt::Std;
+use POSIX qw(strftime);
+use Storable qw(dclone);
+
+my %o;
+getopts('v',\%o);
+
+my %tl=(intermediate => 1800, tactical => 180, engagement => 15);
+# yes, 15, that's for one movement phase of the two in an engagement turn
+
+my $metrespernauticalmile=1852;
+my $metresperyard=0.9144;
+my $geo=Geo::Ellipsoid->new(units=>'degrees');
+
+my $y=yaml_load_file($ARGV[0]);
+(my $stub=$ARGV[0]) =~ s/\.yaml$//;
+my $outpath='.';
+if ($stub =~ /(.*)\/([^\/]+)/) {
+  $outpath=$1;
+  $stub=$2;
+}
+
+my $turnlength=$y->{general}{turn} || 0;
+if (exists $tl{$turnlength}) {
+  $turnlength=$tl{$turnlength};
+}
+unless ($turnlength>0) {
+  die "Need a turn length\n";
+}
+
+my %id;
+foreach my $sidename (keys %{$y->{units}}) {
+  foreach my $shiph (@{$y->{units}{$sidename}}) {
+    my $shipname=(keys %{$shiph})[0];
+    my $ship=$shiph->{$shipname};
+    unless (exists $ship->{foreignshort}) {
+      my @char=('A'..'Z');
+      do {
+        $ship->{foreignshort}=join('',map {$char[int(rand()*$_)]} (26)x3);
+      } while (exists $id{$ship->{foreignshort}});
+      $id{$ship->{foreignshort}}=dclone($ship);
+    }
+    my $id=$ship->{short} || substr(uc($shipname),0,3);
+    $id{$id}=dclone($ship);
+  }
+}
+
+foreach my $sidename (keys %{$y->{units}}) {
+ SHIP:
+  foreach my $shiph (@{$y->{units}{$sidename}}) {
+    my $shipname=(keys %{$shiph})[0];
+    my $ship=$shiph->{$shipname};
+    my $id=$ship->{short} || substr(uc($shipname),0,3);
+    if ($o{v}) {
+      warn "\nProcessing $shipname\n";
+    }
+    {
+      my %r=(time => $y->{general}{time});
+      foreach my $term (qw(lat lon loc course speed detected)) {
+        if (exists $ship->{$term}) {
+          $r{$term}=$ship->{$term};
+        }
+      }
+      if (exists $ship->{history} && $ship->{history}[-1]{time} == $r{time}) {
+        pop @{$ship->{history}};
+      }
+      push @{$ship->{history}},\%r;
+    }
+    if (exists $ship->{throttle} && $ship->{throttle}<1) {
+      $ship->{throttle}=1/$ship->{throttle};
+    }
+    my $tl=$turnlength;
+    if (exists $ship->{turn}) {
+      $tl=$ship->{turn} || 0;
+      if (exists $tl{$tl}) {
+        $tl=$tl{$tl};
+      }
+    }
+    my $timetaken=0;
+    my $lsc=0;
+    my $orders='';
+    if (exists $y->{general}{orders}{$id}) {
+      $orders=$y->{general}{orders}{$id};
+    } elsif (exists $ship->{orders}) {
+      $orders=$ship->{orders};
+    }
+    my $track=0;
+    if (length($orders)>0) {
+      my @orders=split ' ',$orders;
+      my $xorders='';
+      while (my $order=shift @orders) {
+        my $hist=0;
+        if ($order =~ /^[.\d]+$/) {
+          my $distance;
+          if ($order >= 100) {
+            $distance=int($order*$metresperyard+0.999);
+          } else {
+            $distance=$order*$metrespernauticalmile;
+          }
+          if ($o{v}) {
+            warn "Travel $distance ($order)\n";
+          }
+          my $speed=$ship->{speed}/3600*$metrespernauticalmile; # m/s
+          my $tm=($distance/$speed) || 0;                       # in s
+          if ($timetaken+$tm >= $tl) {
+            my $tx=int($timetaken+$tm-$tl+0.5);
+            if ($tx>0) {
+              unshift @orders,$tx.'s';
+            }
+            $xorders=join(' ',@orders);
+            if ($o{v}) {
+              warn "New orders: $xorders\n";
+            }
+            $tm=$tl-$timetaken;
+            $distance=$tm*$speed;
+            @orders=();
+          }
+          $track+=$distance;
+          ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
+          delete $ship->{loc};
+          $timetaken+=$tm;
+        } elsif ($order =~ /^\@(?<id>[A-Z0-9]{3})$/) {
+          unless (exists $id{$+{id}}) {
+            die "$id can't refer to $+{id}\n";
+          }
+          if ($o{v}) {
+            warn "Jump to $+{id}\n";
+          }
+          ($ship->{lat},$ship->{lon})=locparse($id{$+{id}});
+          foreach my $item (qw(course speed)) {
+            $ship->{$item}=$id{$+{id}}{$item};
+          }
+        } elsif ($order =~ /^>(?<mode>[ic])?(?<id>[A-Z0-9]{3})$/) {
+          unless (exists $id{$+{id}}) {
+            die "$id can't refer to $+{id}\n";
+          }
+          my $mode=$+{mode} || 'i';
+          my @me=locparse($ship);
+          my @target=locparse($id{$+{id}});
+          if ($o{v}) {
+            warn "Intercept $mode $+{id}\n";
+          }
+          if ($mode eq 'c') { # tail chase
+            $ship->{course}=int($geo->bearing(@me,@target)+.5);
+          } else { # leading intercept
+            my $ispeed=$ship->{speed};
+            my ($range,$bearing)=$geo->to(@me,@target);
+            my $tspeed=$id{$+{id}}{speed};
+            my $tcourse=$id{$+{id}}{course};
+            my $brr=90-deg2rad($bearing);
+            my ($tx,$ty)=map {$_*$range} (cos($brr),sin($brr));
+            my $thetat=(($bearing+180-$tcourse)+180)%360-180;
+            my $transverse=sin(deg2rad($thetat))*$tspeed;
+            if ($transverse/$ispeed>1 || $transverse/$ispeed<-1) {
+              warn "No intercept at this speed.\n";
+            } else {
+              my $thetas=rad2deg(asin($transverse/$ispeed));
+              $ship->{course}=int($thetas+$bearing+360.5)%360;
+            }
+          }
+          $hist=1;
+        } elsif ($order =~ /^(?<time>[.\d]+)(?<unit>[sm])$/ ||
+                 exists $tl{$order}) {
+          my $tm=$+{time} || 0;
+          if (defined $+{unit} && $+{unit} eq 'm') {
+            $tm*=60;
+          }
+          if (exists $tl{$order}) {
+            my $r=$tl{$order};
+            my $target=int(($y->{general}{time}+$timetaken+$r-1)/$r)*$r;
+            $tm=$target-$timetaken-$y->{general}{time};
+          }
+          if ($o{v}) {
+            warn "Continue for $tm seconds\n";
+          }
+          my $speed=$ship->{speed}/3600*$metrespernauticalmile; # m/s
+          if ($timetaken+$tm >= $tl) {
+            my $tx=int($timetaken+$tm-$tl+0.5);
+            if ($tx>0) {
+              unshift @orders,"${tx}s";
+            }
+            $xorders=join(' ',@orders);
+            if ($o{v}) {
+              warn "New orders: $xorders\n";
+            }
+            $tm=$tl-$timetaken;
+            @orders=();
+          }
+          my $distance=$tm*$speed;
+          $track+=$distance;
+          ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
+          delete $ship->{loc};
+          $timetaken+=$tm;
+        } elsif ($order =~ /^(?<dir>[LPRS])(?<delta>\d+)$/) {
+          my $delta=$+{delta};
+          if ($delta > 0) {
+            if ($+{dir} =~ /[LP]/) {
+              $delta=-$delta;
+            }
+            if ($o{v}) {
+              warn "Turn by $delta\n";
+            }
+            $ship->{course}=$ship->{course}+$delta;
+            $ship->{course}%=360;
+            while ($ship->{course}<0) {
+              $ship->{course}+=360;
+            }
+          }
+          $hist=1;
+        } elsif ($order =~ /^(?<course>\d+)T$/) {
+          if ($o{v}) {
+            warn "Turn to $+{course}\n";
+          }
+          $ship->{course}=$+{course};
+          $ship->{course}%=360;
+          while ($ship->{course}<0) {
+            $ship->{course}+=360;
+          }
+          $hist=1;
+        } elsif ($order =~ /^(?<speed>\d+)kt$/) {
+          if (exists $ship->{battery}) {
+            $ship->{battery}-=($timetaken-$lsc)/3600*battery($ship->{speed});
+            $lsc=$timetaken;
+          }
+          if ($o{v}) {
+            warn "Speed is $+{speed}\n";
+          }
+          $ship->{speed}=$+{speed};
+        } elsif ($order =~ /^A(?<mode>[-+])?(?<alt>\d+)$/) {
+          if (exists $ship->{altitude}) {
+            if ($+{mode}) {
+              if ($+{mode} eq '+') {
+                $ship->{altitude}+=$+{alt};
+              } else {
+                $ship->{altitude}-=$+{alt};
+              }
+            } else {
+              $ship->{altitude}=$+{alt};
+            }
+            if ($o{v}) {
+              warn "Altitude is $ship->{altitude}\n";
+            }
+          } else {
+            warn "Altitude set for non-flying unit $shipname\n";
+          }
+        } elsif ($order =~ /^D(?<mode>[-+])?(?<depth>\d+)$/) {
+          if (exists $ship->{depth}) {
+            if ($+{mode}) {
+              if ($+{mode} eq '+') {
+                $ship->{depth}+=$+{depth};
+              } else {
+                $ship->{depth}-=$+{depth};
+              }
+            } else {
+              $ship->{depth}=$+{depth};
+            }
+            if ($o{v}) {
+              warn "Depth is $ship->{depth}\n";
+            }
+          } else {
+            warn "Depth set for non-submerged unit $shipname\n";
+          }
+        } elsif ($order =~ /^T(?<thr>[.\d]+)$/) {
+          if (exists $ship->{fuel}) {
+            $ship->{throttle}=($+{thr}>1)?$+{thr}:(1/$+{thr});
+            if ($o{v}) {
+              warn "Throttle is $ship->{throttle}\n";
+            }
+          } else {
+            warn "Throttle set for non-fuel unit $shipname\n";
+          }
+        }
+        if ($hist) {
+          my %r=(time => $y->{general}{time}+$timetaken);
+          foreach my $term (qw(lat lon loc course speed detected)) {
+            if (exists $ship->{$term}) {
+              $r{$term}=$ship->{$term};
+            }
+          }
+          if (exists $ship->{history} && $ship->{history}[-1]{time} == $r{time}) {
+            pop @{$ship->{history}};
+          }
+          push @{$ship->{history}},\%r;
+        }
+      }
+      delete $ship->{orders};
+      delete $y->{general}{orders}{$id};
+      if ($xorders) {
+        $orders=$y->{general}{orders}{$id}=$xorders;
+      }
+    }
+    if (exists $ship->{battery}) {
+      $ship->{battery}-=($tl-$lsc)/3600*battery($ship->{speed});
+      $lsc=$timetaken;
+    }
+    if ($tl-$timetaken>0) {
+      my $tm=$tl-$timetaken;
+      if ($o{v}) {
+        warn "A further $tm seconds\n";
+      }
+      my $speed=$ship->{speed}/3600*$metrespernauticalmile; # m/s
+      my $distance=$tm*$speed;
+      $track+=$distance;
+      ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
+      delete $ship->{loc};
+    }
+    if (exists $ship->{fuel} && exists $ship->{consumption}) {
+      my $mindist=$ship->{maxspeed}/2*$metrespernauticalmile/3600*$tl;
+      if ($track < $mindist) {
+        $track=$mindist;
+      }
+      $ship->{fuel}-=$ship->{consumption}*$track/$metrespernauticalmile*$ship->{throttle};
+      if ($o{v}) {
+warn "track: $track\nmindist: $mindist\nthrottle: $ship->{throttle}\nConsumption: ".$ship->{consumption}*$track/$metrespernauticalmile*$ship->{throttle}."\n";
+        warn "$shipname has ".int($ship->{fuel}/($ship->{consumption}*$track/$metrespernauticalmile*$ship->{throttle}))." turns like that left.\n";
+      } else {
+        if ($ship->{fuel}<=0) {
+          warn "$shipname has run out of fuel.\n";
+        }
+      }
+    }
+  }
+}
+my $on=$ARGV[0].'.new';
+if (exists $y->{general}{time}) {
+  $y->{general}{time}+=$turnlength;
+  $ENV{TZ}=$y->{general}{timezone} || 'GMT';
+  $on=strftime(($y->{general}{timeformat} || '%Y-%m-%dT%H-%M-%S'),localtime($y->{general}{time}));
+}
+
+yaml_save_file($ARGV[1] || "$outpath/$on.yaml",$y);
+
+sub yaml_load_file {
+  my $file=shift;
+  open (I,'<',$file) || die "Can't load $file\n";
+  my $data=join('',<I>);
+  close I;
+  my $r=Load($data) || die "Can't decode $file\n";
+  return $r;
+}
+
+sub yaml_save_file {
+  my $file=shift;
+  my $r=shift;
+  open (I,'>',$file) || die "Can't save to $file\n";
+  print I Dump($r);
+  close I;
+}
+
+sub locparse {
+  my $h=shift @_;
+  if (exists $h->{lat} && exists $h->{lon}) {
+    return ($h->{lat},$h->{lon});
+  } elsif (exists $h->{loc}) {
+    if ($h->{loc} =~ /^\s*([-.0-9]+),\s*([-.0-9]+)\s*\+\s*([-.0-9]+)\s*\@\s*([-.0-9]+)\s*$/) {
+      return $geo->at($1,$2,$3*$metrespernauticalmile,$4);
+    } elsif ($h->{loc} =~ /^\s*([-.0-9]+),\s*([-.0-9]+)\s*$/) {
+      return ($1,$2);
+    } else {
+      die "Bad loc\n".Dump($h);
+    }
+  } else {
+    die "Bad input\n".Dump($h);
+  }
+}
+
+sub battery { # units per hour
+  my ($speed)=@_;
+  if ($speed<=5) {
+    return 1;
+  } elsif ($speed<=7) {
+    return 2;
+  } elsif ($speed<=7) {
+    return 2;
+  } elsif ($speed<=9) {
+    return 3;
+  } elsif ($speed<=11) {
+    return 4;
+  } elsif ($speed<=13) {
+    return 8;
+  } elsif ($speed<=15) {
+    return 12;
+  } elsif ($speed<=16) {
+    return 15;
+  } elsif ($speed<=17) {
+    return 20;
+  } elsif ($speed<=18) {
+    return 25;
+  } elsif ($speed<=19) {
+    return 39;
+  } elsif ($speed<=20) {
+    return 40;
+  } elsif ($speed<=21) {
+    return 50;
+  } elsif ($speed<=22) {
+    return 60;
+  } elsif ($speed<=23) {
+    return 75;
+  } elsif ($speed<=24) {
+    return 90;
+  } elsif ($speed<=25) {
+    return 100;
+  } else {
+    die "Submarine too fast at $speed!\n";
+  }
+}
