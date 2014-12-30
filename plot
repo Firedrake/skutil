@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 
-# plain mode: lat/long lines
+# add datum
 # OSM mode
 # auto-choose chart, maybe use multiple charts
 # contacts (bearing-only, range)
@@ -37,8 +37,9 @@ my $c30=cos(deg2rad(30));
 my $s30=sin(deg2rad(30));
 my $c60=$s30;
 my $s60=$c30;
-my $fn=Imager::Font->new(file => '/mnt/inferno/software/fonts/Sans Serif/Helvetica/Helvetica.ttf',
-                         size => 10);
+my $fn=Imager::Font->new(file => '/usr/share/fonts/truetype/ttf-liberation/LiberationSans-Regular.ttf',
+                         size => 10,
+                         utf8 => 1);
 open DEPTH,'<','map/ETOPO1/etopo1_bed_g_f4.flt';
 binmode DEPTH;
 umask 0022;
@@ -146,6 +147,97 @@ foreach my $sidename (@sides) {
                          ysize => $cvt{crop}{height});
         my $blue=Imager::Color->new(187, 206, 236);
         $img->box(color => $blue, filled => 1);
+        my @bll;
+        foreach my $y (0,$cvt{crop}{height}*$cvt{scale}/2,$cvt{crop}{height}*$cvt{scale}) {
+          foreach my $x (0,$cvt{crop}{width}*$cvt{scale}/2,$cvt{crop}{width}*$cvt{scale}) {
+            push @bll,[xy2ll($x,$y)];
+          }
+        }
+        my $mlatmin=min(map {$bll[$_][0]} (0..$#bll));
+        my $mlatmax=max(map {$bll[$_][0]} (0..$#bll));
+        my $mlonmin=min(map {$bll[$_][1]} (0..$#bll));
+        my $mlonmax=max(map {$bll[$_][1]} (0..$#bll));
+        for (my $lat=int($mlatmin*2)/2;$lat<=$mlatmax;$lat+=0.5) {
+          my @poly;
+          for (my $xlon=int($mlonmin*60);$xlon<=$mlonmax*60+1;$xlon++) {
+            my $lon=$xlon/60;
+            push @poly,[ll2xy($lat,$lon)];
+            my @bound;
+            if ($xlon%30==0) {
+              next;
+            } elsif ($xlon%10==0) {
+              @bound=(-2/3,2/3);
+            } elsif ($xlon%5==0) {
+              @bound=(0,2/3);
+            } else {
+              @bound=(0,1/3);
+            }
+            my @a=ll2xy($lat+$bound[0]/60,$lon);
+            my @b=ll2xy($lat+$bound[1]/60,$lon);
+            $img->line(x1 => $a[0],y1 => $a[1],
+                       x2 => $b[0],y2 => $b[1],
+                       colour => $black);
+          }
+          $img->polyline(points => \@poly,
+                         color => $black);
+        }
+        for (my $lon=int($mlonmin*2)/2;$lon<=$mlonmax;$lon+=0.5) {
+          my @poly;
+          for (my $xlat=int($mlatmin*60);$xlat<=$mlatmax*60+1;$xlat++) {
+            my $lat=$xlat/60;
+            push @poly,[ll2xy($lat,$lon)];
+            my @bound;
+            if ($xlat%30==0) {
+              next;
+            } elsif ($xlat%10==0) {
+              @bound=(-2/3,2/3);
+            } elsif ($xlat%5==0) {
+              @bound=(0,2/3);
+            } else {
+              @bound=(0,1/3);
+            }
+            my @a=ll2xy($lat,$lon+$bound[0]/60);
+            my @b=ll2xy($lat,$lon+$bound[1]/60);
+            $img->line(x1 => $a[0],y1 => $a[1],
+                       x2 => $b[0],y2 => $b[1],
+                       colour => $black);
+          }
+          $img->polyline(points => \@poly,
+                         color => $black);
+        }
+        for (my $lat=int($mlatmin);$lat<=$mlatmax;$lat++) {
+          my $displat=abs($lat);
+          if ($lat>0) {
+            $displat.='N';
+          } else {
+            $displat.='S';
+          }
+          for (my $lon=int($mlonmin);$lon<=$mlonmax;$lon++) {
+            my $displon=abs($lon);
+            if ($lon>0) {
+              $displon.='E';
+            } else {
+              $displon.='W';
+            }
+            my @xy=ll2xy($lat,$lon);
+            $img->align_string(x => $xy[0]-3,
+                               y => $xy[1]-3,
+                               valign => 'bottom',
+                               halign => 'right',
+                               font => $fn,
+                               size => 20,
+                               color => $black,
+                               string => $displat);
+            $img->align_string(x => $xy[0]+3,
+                               y => $xy[1]+3,
+                               valign => 'top',
+                               halign => 'left',
+                               font => $fn,
+                               size => 20,
+                               color => $black,
+                               string => $displon);
+          }
+        }
       }
       $ovl=Imager->new(xsize => $img->getwidth,
                        ysize => $img->getheight,
