@@ -1,7 +1,6 @@
 #! /usr/bin/perl
 
 # add datum
-# OSM mode
 # auto-choose chart, maybe use multiple charts
 # contacts (bearing-only, range)
 # contacts:
@@ -16,9 +15,10 @@ use warnings FATAL => 'all';
 use Getopt::Std;
 use YAML::XS;
 use Imager;
+use LWP::Simple;
 use Geo::Ellipsoid;
 use List::Util qw(max min);
-use Math::Trig qw(:pi deg2rad rad2deg tan);
+use Math::Trig qw(:pi deg2rad rad2deg tan sec sinh atan);
 use HTML::Template;
 use POSIX qw(strftime);
 
@@ -30,6 +30,8 @@ getopts('d:h:s:z:',\%o);
 # -s side name to plot
 # -z zoom scale
 
+my $tiledir="$ENV{HOME}/Maps/OSM";
+my $tilesize=256;
 my $geo=Geo::Ellipsoid->new(units=>'degrees');
 my $nm=1852;
 my $yard=0.9144;
@@ -53,8 +55,12 @@ if ($stub =~ /(.*)\/([^\/]+)/) {
   $stub=$2;
 }
 my %cvt=(plotmode => 'plain');
-if (exists $y->{general}{chart}) { # maybe "osm" later
-  $cvt{plotmode}='chart';
+if (exists $y->{general}{chart}) {
+  if ($y->{general}{chart} eq 'osm') {
+    $cvt{plotmode}='osm';
+  } else {
+    $cvt{plotmode}='chart';
+  }
 }
 if ($cvt{plotmode} eq 'chart') {
   my $yd=yaml_load_file('datum.yaml')->{$y->{general}{chart}};
@@ -142,11 +148,35 @@ foreach my $sidename (@sides) {
             $img=$img->scale(scalefactor => $cvt{scale});
           }
         }
-      } elsif ($cvt{plotmode} eq 'plain') {
+      } elsif ($cvt{plotmode} eq 'plain' or $cvt{plotmode} eq 'osm') {
         $img=Imager->new(xsize => $cvt{crop}{width},
                          ysize => $cvt{crop}{height});
-        my $blue=Imager::Color->new(187, 206, 236);
-        $img->box(color => $blue, filled => 1);
+        if ($cvt{plotmode} eq 'plain') {
+          my $blue=Imager::Color->new(187, 206, 236);
+          $img->box(color => $blue, filled => 1);
+        } else {
+          mkdir "$tiledir/$cvt{zoomlevel}";
+          foreach my $x ($cvt{xmin}..$cvt{xmax}) {
+            mkdir "$tiledir/$cvt{zoomlevel}/$x";
+            foreach my $y ($cvt{ymin}..$cvt{ymax}) {
+              unless (-e "$tiledir/$cvt{zoomlevel}/$x/$y.png") {
+                my $data=get("http://tile.openstreetmap.org/$cvt{zoomlevel}/$x/$y.png");
+                unless ($data) {
+                  die "Couldn't fetch http://tile.openstreetmap.org/$cvt{zoomlevel}/$x/$y.png\n";
+                }
+                open OUT,">$tiledir/$cvt{zoomlevel}/$x/$y.png";
+                binmode OUT;
+                print OUT $data;
+                close OUT;
+              }
+              my $i=Imager->new;
+              $i->read(file => "$tiledir/$cvt{zoomlevel}/$x/$y.png");
+              $img->rubthrough(left => $tilesize*($x-$cvt{xmin}),
+                               top => $tilesize*($y-$cvt{ymin}),
+                               src => $i);
+            }
+          }
+        }
         my @bll;
         foreach my $y (0,$cvt{crop}{height}*$cvt{scale}/2,$cvt{crop}{height}*$cvt{scale}) {
           foreach my $x (0,$cvt{crop}{width}*$cvt{scale}/2,$cvt{crop}{width}*$cvt{scale}) {
@@ -205,37 +235,43 @@ foreach my $sidename (@sides) {
           $img->polyline(points => \@poly,
                          color => $black);
         }
+        my $ascale=max(1,(l125(($mlatmax-$mlatmin)/2))[0]);
+        my $oscale=max(1,(l125(($mlonmax-$mlonmin)/2))[0]);
         for (my $lat=int($mlatmin);$lat<=$mlatmax;$lat++) {
           my $displat=abs($lat);
-          if ($lat>0) {
-            $displat.='N';
-          } else {
-            $displat.='S';
-          }
-          for (my $lon=int($mlonmin);$lon<=$mlonmax;$lon++) {
-            my $displon=abs($lon);
-            if ($lon>0) {
-              $displon.='E';
+          if ($displat % $ascale == 0) {
+            if ($lat>0) {
+              $displat.='N';
             } else {
-              $displon.='W';
+              $displat.='S';
             }
-            my @xy=ll2xy($lat,$lon);
-            $img->align_string(x => $xy[0]-3,
-                               y => $xy[1]-3,
-                               valign => 'bottom',
-                               halign => 'right',
-                               font => $fn,
-                               size => 20,
-                               color => $black,
-                               string => $displat);
-            $img->align_string(x => $xy[0]+3,
-                               y => $xy[1]+3,
-                               valign => 'top',
-                               halign => 'left',
-                               font => $fn,
-                               size => 20,
-                               color => $black,
-                               string => $displon);
+            for (my $lon=int($mlonmin);$lon<=$mlonmax;$lon++) {
+              my $displon=abs($lon);
+              if ($displon % $oscale == 0) {
+                if ($lon>0) {
+                  $displon.='E';
+                } else {
+                  $displon.='W';
+                }
+                my @xy=ll2xy($lat,$lon);
+                $img->align_string(x => $xy[0]-3,
+                                   y => $xy[1]-3,
+                                   valign => 'bottom',
+                                   halign => 'right',
+                                   font => $fn,
+                                   size => 20,
+                                   color => $black,
+                                   string => $displat);
+                $img->align_string(x => $xy[0]+3,
+                                   y => $xy[1]+3,
+                                   valign => 'top',
+                                   halign => 'left',
+                                   font => $fn,
+                                   size => 20,
+                                   color => $black,
+                                   string => $displon);
+              }
+            }
           }
         }
       }
@@ -413,6 +449,41 @@ foreach my $sidename (@sides) {
         $info{yoffset}=$info{crop}{height}/2-($max[0]+$min[0])/2*$info{yscale};
         $info{scale}=1;
         map {$cvt{$_}=$info{$_}} qw(xscale yscale scale xoffset yoffset crop);
+      } elsif ($cvt{plotmode} eq 'osm') {
+        my $longdist=max(
+          $geo->to($min[0],$min[1],$min[0],$max[1]),
+          $geo->to($max[0],$min[1],$max[0],$max[1]),
+            );                       # metres
+        my $longscale=$longdist/800; # metres/pixel
+        my $latdist=max(
+          $geo->to($min[0],$min[1],$max[0],$min[1]),
+          $geo->to($min[0],$max[1],$max[0],$max[1]),
+            );
+        my $latscale=$latdist/800;
+        my $scale=max($longscale,$latscale); # make sure it fits, use wider scale
+        $cvt{zoomlevel}=int(
+          log(
+            cos(
+              deg2rad(
+                ($min[0]+$max[0])/2
+                  )
+                )*6378137.0*2*pi/$scale
+                  )/log(2)-8
+                    );
+        $cvt{xmax}=int((getTileNumber($max[0],$max[1],$cvt{zoomlevel}))[0]+.9999999);
+        $cvt{xmin}=int((getTileNumber($min[0],$min[1],$cvt{zoomlevel}))[0]);
+        $cvt{ymax}=int((getTileNumber($min[0],$min[1],$cvt{zoomlevel}))[1]+.9999999);
+        $cvt{ymin}=int((getTileNumber($max[0],$max[1],$cvt{zoomlevel}))[1]);
+        $cvt{crop}{left}=0;
+        $cvt{crop}{top}=0;
+        $cvt{crop}{height}=$tilesize*($cvt{ymax}-$cvt{ymin}+1);
+        $cvt{crop}{width}=$tilesize*($cvt{xmax}-$cvt{xmin}+1);
+        $cvt{scale}=1;
+        $cvt{xclipmax}=int((ll2xy($max[0],$max[1],$cvt{zoomlevel}))[0]);
+        $cvt{xclipmin}=int((ll2xy($min[0],$min[1],$cvt{zoomlevel}))[0]+.9999999);
+        $cvt{yclipmax}=int((ll2xy($min[0],$min[1],$cvt{zoomlevel}))[1]+.9999999);
+        $cvt{yclipmin}=int((ll2xy($max[0],$max[1],$cvt{zoomlevel}))[1]);
+        %info=%cvt;
       }
     } else {
       $img->rubthrough(src => $ovl);
@@ -513,15 +584,7 @@ foreach my $sidename (@sides) {
         my @scaleend=xy2ll($info{crop}{width}-10,$info{crop}{height}*$info{scale}-25);
         {
           my $r=$geo->range(@scalestart,@scaleend)/$nm;
-          my $base=10**(int(log($r)/log(10)));
-          my $sub=$base/5;
-          if ($base*5 < $r) {
-            $base*=5;
-            $sub=$base/5;
-          } elsif ($base*2 < $r) {
-            $base*=2;
-            $sub=$base/4;
-          }
+          my ($base,$sub)=l125($r);
           my @pt;
           for (my $sc=0;$sc<=$base;$sc+=$sub) {
             push @pt,[ll2xy($geo->at(@scalestart,$sc*$nm,90))];
@@ -558,6 +621,12 @@ foreach my $sidename (@sides) {
         }
         delete $cvt{crop};
         delete $cvt{scale};
+#        if (exists $cvt{xclipmax}) {
+#          $img=$img->crop(left => $cvt{xclipmin},
+#                          top => $cvt{yclipmin},
+#                          width => $cvt{xclipmax}-$cvt{xclipmin},
+#                          height => $cvt{yclipmax}-$cvt{yclipmin});
+#        }
         $img->write(file => join('.',"$outpath/$stub",$y->{general}{side}{$sidename}{keyword},'jpg'));
       }                         # end pass 2 only
       if ($pass==3) {           # highlight active area
@@ -693,6 +762,10 @@ sub ll2xy {
   } elsif ($cvt{plotmode} eq 'plain') {
     $x=$lon*$cvt{xscale}+$cvt{xoffset};
     $y=$lat*$cvt{yscale}+$cvt{yoffset};
+  } elsif ($cvt{plotmode} eq 'osm') {
+    ($x,$y)=getTileNumber($lat,$lon);
+    $x=($x-$cvt{xmin})*$tilesize;
+    $y=($y-$cvt{ymin})*$tilesize;
   }
   if (exists $cvt{crop}) {
     $x-=$cvt{crop}{left};
@@ -726,6 +799,10 @@ sub xy2ll {
   } elsif ($cvt{plotmode} eq 'plain') {
     $lat=($y-$cvt{yoffset})/$cvt{yscale};
     $lon=($x-$cvt{xoffset})/$cvt{xscale};
+  } elsif ($cvt{plotmode} eq 'osm') {
+    $x=($x/$tilesize)+$cvt{xmin};
+    $y=($y/$tilesize)+$cvt{ymin};
+    ($lat,$lon)=tilenumber2latlon($x,$y);
   }
   return ($lat,$lon);
 }
@@ -1283,6 +1360,36 @@ sub unitband {
     $band='VD';
   }
   return $band;
+}
+
+sub l125 {
+  my $r=shift;
+  my $base=10**(int(log($r)/log(10)));
+  my $sub=$base/5;
+  if ($base*5 < $r) {
+    $base*=5;
+    $sub=$base/5;
+  } elsif ($base*2 < $r) {
+    $base*=2;
+    $sub=$base/4;
+  }
+  return ($base,$sub);
+}
+
+sub getTileNumber {
+  my ($lat,$lon) = @_;
+  my $n=2**$cvt{zoomlevel};
+  my $xtile = ($lon+180)/360*$n;
+  my $ytile = (1 - log(tan(deg2rad($lat)) + sec(deg2rad($lat)))/pi)/2*$n;
+  return ($xtile, $ytile);
+}
+
+sub tilenumber2latlon {
+  my ($xtile,$ytile)=@_;
+  my $n=2**$cvt{zoomlevel};
+  my $lon=$xtile/$n*360-180;
+  my $lat=rad2deg(atan(sinh(pi*(1-2*$ytile/$n))));
+  return ($lat,$lon);
 }
 
 # this code from CTAN, apparently!
