@@ -10,7 +10,7 @@
 # feed into detected/history? ("detectors"?)
 
 use strict;
-use warnings FATAL => 'all';
+use warnings;
 
 use Getopt::Std;
 use YAML::XS;
@@ -125,6 +125,56 @@ if ($o{s} && $o{s} eq 'all') {
   push @sides,'all';
 }
 
+my %shortcode;
+foreach my $sideplot (keys %{$y->{units}}) {
+  foreach my $unith (@{$y->{units}{$sideplot}}) {
+    my $unitname=(keys %{$unith})[0];
+    my $unit=$unith->{$unitname};
+    $unit->{side}=$sideplot;
+    $unit->{name}=$unitname;
+    if (exists $unit->{foreignshort}) {
+      $shortcode{$unit->{foreignshort}}=$unit;
+    }
+    if (exists $unit->{short}) {
+      $shortcode{$unit->{short}}=$unit;
+    }
+    $shortcode{substr(uc($unitname),0,3)}=$unit;
+  }
+}
+
+if (exists $y->{general}{contacts}) { # this should really be in order not plot
+  foreach my $sensor (keys %{$y->{general}{contacts}}) {
+    my $su=$shortcode{$sensor} or next;
+    my @sl=locparse($su);
+    foreach my $target (keys %{$y->{general}{contacts}{$sensor}}) {
+      my $tu=$shortcode{$target} or next;
+      my @tl=locparse($tu);
+      my ($range,$bearing)=$geo->to(@sl,@tl);
+      $range/=$nm;
+      foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
+        my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
+        if ($range <= $xrange) {
+          if ($type eq 'fix') { # fix, full data
+            $tu->{detected}{$su->{side}}=1;
+          } else {              # bearing
+            my @a;
+            do {
+              @a=(int(rand(4))-int(rand(4)),int(rand(4))-int(rand(4)));
+            } while ($a[0] == $a[1]);
+            ($a[0],$a[1])=map {$bearing+$_} (min(@a),max(@a));
+            push @{$su->{draw}},{type => 'arc',
+                                 radius => $xrange,
+                                 anglestart => $a[0],
+                                 angleend => $a[1],
+                                 tag => $target,
+                                 colour => $tu->{colour} || $y->{general}{side}{$tu->{side}}{colour}};
+          }
+        }
+      }
+    }
+  }
+}
+
 foreach my $sidename (@sides) {
   my @boundsll;
   my %info;
@@ -177,99 +227,101 @@ foreach my $sidename (@sides) {
             }
           }
         }
-        my @bll;
-        foreach my $y (0,$cvt{crop}{height}*$cvt{scale}/2,$cvt{crop}{height}*$cvt{scale}) {
-          foreach my $x (0,$cvt{crop}{width}*$cvt{scale}/2,$cvt{crop}{width}*$cvt{scale}) {
-            push @bll,[xy2ll($x,$y)];
-          }
-        }
-        my $mlatmin=min(map {$bll[$_][0]} (0..$#bll));
-        my $mlatmax=max(map {$bll[$_][0]} (0..$#bll));
-        my $mlonmin=min(map {$bll[$_][1]} (0..$#bll));
-        my $mlonmax=max(map {$bll[$_][1]} (0..$#bll));
-        for (my $lat=int($mlatmin*2)/2;$lat<=$mlatmax;$lat+=0.5) {
-          my @poly;
-          for (my $xlon=int($mlonmin*60);$xlon<=$mlonmax*60+1;$xlon++) {
-            my $lon=$xlon/60;
-            push @poly,[ll2xy($lat,$lon)];
-            my @bound;
-            if ($xlon%30==0) {
-              next;
-            } elsif ($xlon%10==0) {
-              @bound=(-2/3,2/3);
-            } elsif ($xlon%5==0) {
-              @bound=(0,2/3);
-            } else {
-              @bound=(0,1/3);
+        if ($cvt{plotmode} eq 'plain') {
+          my @bll;
+          foreach my $y (0,$cvt{crop}{height}*$cvt{scale}/2,$cvt{crop}{height}*$cvt{scale}) {
+            foreach my $x (0,$cvt{crop}{width}*$cvt{scale}/2,$cvt{crop}{width}*$cvt{scale}) {
+              push @bll,[xy2ll($x,$y)];
             }
-            my @a=ll2xy($lat+$bound[0]/60,$lon);
-            my @b=ll2xy($lat+$bound[1]/60,$lon);
-            $img->line(x1 => $a[0],y1 => $a[1],
-                       x2 => $b[0],y2 => $b[1],
-                       colour => $black);
           }
-          $img->polyline(points => \@poly,
-                         color => $black);
-        }
-        for (my $lon=int($mlonmin*2)/2;$lon<=$mlonmax;$lon+=0.5) {
-          my @poly;
-          for (my $xlat=int($mlatmin*60);$xlat<=$mlatmax*60+1;$xlat++) {
-            my $lat=$xlat/60;
-            push @poly,[ll2xy($lat,$lon)];
-            my @bound;
-            if ($xlat%30==0) {
-              next;
-            } elsif ($xlat%10==0) {
-              @bound=(-2/3,2/3);
-            } elsif ($xlat%5==0) {
-              @bound=(0,2/3);
-            } else {
-              @bound=(0,1/3);
+          my $mlatmin=min(map {$bll[$_][0]} (0..$#bll));
+          my $mlatmax=max(map {$bll[$_][0]} (0..$#bll));
+          my $mlonmin=min(map {$bll[$_][1]} (0..$#bll));
+          my $mlonmax=max(map {$bll[$_][1]} (0..$#bll));
+          for (my $lat=int($mlatmin*2)/2;$lat<=$mlatmax;$lat+=0.5) {
+            my @poly;
+            for (my $xlon=int($mlonmin*60);$xlon<=$mlonmax*60+1;$xlon++) {
+              my $lon=$xlon/60;
+              push @poly,[ll2xy($lat,$lon)];
+              my @bound;
+              if ($xlon%30==0) {
+                next;
+              } elsif ($xlon%10==0) {
+                @bound=(-2/3,2/3);
+              } elsif ($xlon%5==0) {
+                @bound=(0,2/3);
+              } else {
+                @bound=(0,1/3);
+              }
+              my @a=ll2xy($lat+$bound[0]/60,$lon);
+              my @b=ll2xy($lat+$bound[1]/60,$lon);
+              $img->line(x1 => $a[0],y1 => $a[1],
+                         x2 => $b[0],y2 => $b[1],
+                         colour => $black);
             }
-            my @a=ll2xy($lat,$lon+$bound[0]/60);
-            my @b=ll2xy($lat,$lon+$bound[1]/60);
-            $img->line(x1 => $a[0],y1 => $a[1],
-                       x2 => $b[0],y2 => $b[1],
-                       colour => $black);
+            $img->polyline(points => \@poly,
+                           color => $black);
           }
-          $img->polyline(points => \@poly,
-                         color => $black);
-        }
-        my $ascale=max(1,(l125(($mlatmax-$mlatmin)/2))[0]);
-        my $oscale=max(1,(l125(($mlonmax-$mlonmin)/2))[0]);
-        for (my $lat=int($mlatmin);$lat<=$mlatmax;$lat++) {
-          my $displat=abs($lat);
-          if ($displat % $ascale == 0) {
-            if ($lat>0) {
-              $displat.='N';
-            } else {
-              $displat.='S';
+          for (my $lon=int($mlonmin*2)/2;$lon<=$mlonmax;$lon+=0.5) {
+            my @poly;
+            for (my $xlat=int($mlatmin*60);$xlat<=$mlatmax*60+1;$xlat++) {
+              my $lat=$xlat/60;
+              push @poly,[ll2xy($lat,$lon)];
+              my @bound;
+              if ($xlat%30==0) {
+                next;
+              } elsif ($xlat%10==0) {
+                @bound=(-2/3,2/3);
+              } elsif ($xlat%5==0) {
+                @bound=(0,2/3);
+              } else {
+                @bound=(0,1/3);
+              }
+              my @a=ll2xy($lat,$lon+$bound[0]/60);
+              my @b=ll2xy($lat,$lon+$bound[1]/60);
+              $img->line(x1 => $a[0],y1 => $a[1],
+                         x2 => $b[0],y2 => $b[1],
+                         colour => $black);
             }
-            for (my $lon=int($mlonmin);$lon<=$mlonmax;$lon++) {
-              my $displon=abs($lon);
-              if ($displon % $oscale == 0) {
-                if ($lon>0) {
-                  $displon.='E';
-                } else {
-                  $displon.='W';
+            $img->polyline(points => \@poly,
+                           color => $black);
+          }
+          my $ascale=max(1,(l125(($mlatmax-$mlatmin)/2))[0]);
+          my $oscale=max(1,(l125(($mlonmax-$mlonmin)/2))[0]);
+          for (my $lat=int($mlatmin);$lat<=$mlatmax;$lat++) {
+            my $displat=abs($lat);
+            if ($displat % $ascale == 0) {
+              if ($lat>0) {
+                $displat.='N';
+              } else {
+                $displat.='S';
+              }
+              for (my $lon=int($mlonmin);$lon<=$mlonmax;$lon++) {
+                my $displon=abs($lon);
+                if ($displon % $oscale == 0) {
+                  if ($lon>0) {
+                    $displon.='E';
+                  } else {
+                    $displon.='W';
+                  }
+                  my @xy=ll2xy($lat,$lon);
+                  $img->align_string(x => $xy[0]-3,
+                                     y => $xy[1]-3,
+                                     valign => 'bottom',
+                                     halign => 'right',
+                                     font => $fn,
+                                     size => 20,
+                                     color => $black,
+                                     string => $displat);
+                  $img->align_string(x => $xy[0]+3,
+                                     y => $xy[1]+3,
+                                     valign => 'top',
+                                     halign => 'left',
+                                     font => $fn,
+                                     size => 20,
+                                     color => $black,
+                                     string => $displon);
                 }
-                my @xy=ll2xy($lat,$lon);
-                $img->align_string(x => $xy[0]-3,
-                                   y => $xy[1]-3,
-                                   valign => 'bottom',
-                                   halign => 'right',
-                                   font => $fn,
-                                   size => 20,
-                                   color => $black,
-                                   string => $displat);
-                $img->align_string(x => $xy[0]+3,
-                                   y => $xy[1]+3,
-                                   valign => 'top',
-                                   halign => 'left',
-                                   font => $fn,
-                                   size => 20,
-                                   color => $black,
-                                   string => $displon);
               }
             }
           }
@@ -296,7 +348,22 @@ foreach my $sidename (@sides) {
         (my $id=$unitname) =~ s/[^A-Za-z]+/_/g;
         $unit->{label}=($friendly?undef:$unit->{foreignshort}) || $unit->{short} || substr(uc($unitname),0,3);
         $unit->{name}=$unitname;
-        if ($friendly || exists $unit->{detected}) {
+        my $plot=1;
+        unless ($friendly) { # is the unit detected?
+          $plot=0;
+          if (exists $unit->{detected}) {
+            if (ref $unit->{detected}) {
+              if (exists $unit->{detected}{$sidename}) {
+                $plot=1;
+              }
+            } else {
+              if ($unit->{detected}==1) {
+                $plot=1;
+              }
+            }
+          }
+        }
+        if ($plot) {
           $plothistory=1;
           my @ll=locparse($unit);
           if ($pass==1) {
@@ -330,6 +397,9 @@ foreach my $sidename (@sides) {
                     $uc->{$mode}=$unit->{$mode};
                   }
                 }
+                if (exists $uc->{tag} && exists $shortcode{$uc->{tag}}->{detected}{$sidename}) {
+                  next;
+                }
                 gendraw($img,$ovl,$uc);
               }
             }
@@ -337,7 +407,7 @@ foreach my $sidename (@sides) {
         }
         if ($plothistory==0 && exists $unit->{history}) {
           foreach (@{$unit->{history}}) {
-            if (exists $_->{detected}) {
+            if (exists $_->{detected}{$sidename}) {
               $plothistory=1;
               last;
             }
@@ -350,10 +420,10 @@ foreach my $sidename (@sides) {
           my @line;
           my @r=@{$unit->{history}};
           push @r,$unit;
-          my $plotted=[];
+          my $plotted;
           my $threshold=$y->{general}{time}-60*$o{h};
           foreach my $ri (0..$#r) {
-            if ($plothistory==2 || exists $r[$ri]{detected}) {
+            if ($plothistory==2 || exists $r[$ri]{detected}{$sidename}) {
               if (exists $r[$ri]{time} && $r[$ri]{time}<$threshold) {
                 next;
               }
@@ -392,7 +462,7 @@ foreach my $sidename (@sides) {
           if ($pass>1) {
             $img->polyline(points => \@line,
                            color => $unit->{colour});
-            if ($plothistory==1 && $plotted && !exists $unit->{detected}) {
+            if ($plothistory==1 && $plotted && !exists $unit->{detected}{$sidename}) {
               $img->align_string(x => $plotted->[0],
                                  y => $plotted->[1]+3,
                                  valign => 'top',
@@ -450,6 +520,11 @@ foreach my $sidename (@sides) {
         $info{scale}=1;
         map {$cvt{$_}=$info{$_}} qw(xscale yscale scale xoffset yoffset crop);
       } elsif ($cvt{plotmode} eq 'osm') {
+        foreach my $axis (0,1) {
+          my $delta=($max[$axis]-$min[$axis])/10;
+          $min[$axis]-=$delta;
+          $max[$axis]+=$delta;
+        }
         my $longdist=max(
           $geo->to($min[0],$min[1],$min[0],$max[1]),
           $geo->to($max[0],$min[1],$max[0],$max[1]),
@@ -656,7 +731,7 @@ foreach my $fromside (@sides) {
       foreach my $tounit (@{$y->{units}{$toside}}) {
         my $eu0=(keys %{$tounit})[0];
         my $eu1=$tounit->{$eu0};
-        if (exists $eu1->{detected} || $fromside eq 'all') {
+        if (exists $eu1->{detected}{$fromside} || $fromside eq 'all') {
           my $height='';
           if (exists $eu1->{depth}) {
             $height=abs($eu1->{depth}).' ['.unitband(-abs($eu1->{depth})).'] / '.abs(getdepth(map {int($_*60)} locparse($eu1)));

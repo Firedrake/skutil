@@ -141,7 +141,7 @@ foreach my $sidename (keys %{$y->{units}}) {
           ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
           delete $ship->{loc};
           $timetaken+=$tm;
-        } elsif ($order =~ /^\@(?<id>[A-Z0-9]{3})$/) {
+        } elsif ($order =~ /^\@(?<id>[A-Z0-9]{2,3})$/) {
           unless (exists $id{$+{id}}) {
             die "$id can't refer to $+{id}\n";
           }
@@ -152,7 +152,7 @@ foreach my $sidename (keys %{$y->{units}}) {
           foreach my $item (qw(course speed)) {
             $ship->{$item}=$id{$+{id}}{$item};
           }
-        } elsif ($order =~ /^>(?<mode>[ic])?(?<id>[A-Z0-9]{3})$/) {
+        } elsif ($order =~ /^>(?<mode>[ic])?(?<id>[A-Z0-9]{2,3})$/) {
           unless (exists $id{$+{id}}) {
             die "$id can't refer to $+{id}\n";
           }
@@ -291,6 +291,8 @@ foreach my $sidename (keys %{$y->{units}}) {
           } else {
             warn "Throttle set for non-fuel unit $shipname\n";
           }
+        } elsif ($order eq 'alert') {
+          warn "Alert for $shipname\n";
         }
         if ($hist) {
           my %r=(time => $y->{general}{time}+$timetaken);
@@ -349,6 +351,46 @@ if (exists $y->{general}{time}) {
   $ENV{TZ}=$y->{general}{timezone} || 'GMT';
   $on=strftime(($y->{general}{timeformat} || '%Y-%m-%dT%H-%M-%S'),localtime($y->{general}{time}));
 }
+
+if (exists $y->{general}{contacts}) {
+  my %shortcode;
+  foreach my $sideplot (keys %{$y->{units}}) {
+    foreach my $unith (@{$y->{units}{$sideplot}}) {
+      my $unitname=(keys %{$unith})[0];
+      my $unit=$unith->{$unitname};
+      delete $unit->{detected};
+      $unit->{side}=$sideplot;
+      $unit->{name}=$unitname;
+      if (exists $unit->{foreignshort}) {
+        $shortcode{$unit->{foreignshort}}=$unit;
+      }
+      if (exists $unit->{short}) {
+        $shortcode{$unit->{short}}=$unit;
+      }
+      $shortcode{substr(uc($unitname),0,3)}=$unit;
+    }
+  }
+  foreach my $sensor (keys %{$y->{general}{contacts}}) {
+    my $su=$shortcode{$sensor} or next;
+    my @sl=locparse($su);
+    foreach my $target (keys %{$y->{general}{contacts}{$sensor}}) {
+      my $tu=$shortcode{$target} or next;
+      my @tl=locparse($tu);
+      my $range=$geo->range(@sl,@tl)/$metrespernauticalmile;
+      my $det=1;
+      my $type=0;               # fix
+      foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
+        my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
+        if ($range <= $xrange) {
+          if ($type eq 'fix') { # fix, full data
+            $tu->{detected}{$su->{side}}=1;
+          }
+        }
+      }
+    }
+  }
+}
+
 
 yaml_save_file($ARGV[1] || "$outpath/$on.yaml",$y);
 

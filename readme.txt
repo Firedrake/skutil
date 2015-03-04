@@ -9,6 +9,10 @@ code at all. Also, my design goal is to be a referee with computer
 assistance, not to recreate computer Harpoon, so I've deliberately not
 automated some processes.
 
+Also I run this on a Linux system. It'll probably work on Windows or
+MacOS boxes with perl, but I have no access to such machines and no
+way of coding for them.
+
 Very broadly:
 
 "plot" plots ship positions in a data file, producing images and HTML
@@ -22,7 +26,23 @@ units, including radar horizon information.
 
 "sonartab" (under development) prints sonar detection information.
 
+A turn's workflow would typically look like:
+
+- receive player orders
+- decide turn length
+- code any new player orders into data file
+- run "orders" to get new data file (this is the actual movement phase)
+- resolve any attacks
+- work out detections ("rangetab")
+- modify new data file for detection information
+- run "plot" to generate maps for one or both sides
+- send out maps, wait for orders
+
 ## Other things you will need (free)
+
+Perl
+
+Perl modules Geo::Ellipsoid, HTML::Template, Imager, YAML::XS
 
 Download TPC or ONC charts from the collection at
 http://www.lib.utexas.edu/maps/tpc/ or
@@ -110,6 +130,7 @@ Data are stored in a YAML file with two hashes: general and units.
 
 general:
   chart: TPC/h-6c <- you can omit this to plot on a plain blue field
+                     or set to "osm" to use OpenStreetMap tiles
   draw:           <- see "drawing objects" below
     - type: circle
       radius: 60
@@ -132,10 +153,25 @@ general:
   turn: intermediate   <- change this to "tactical", "engagement", or
                           a number of seconds
 
+Why would you use OpenStreetMap or a plain field rather than charts?
+Because you haven't downloaded that chart, because the engagement
+takes place in an area the charts don't cover, because the scenario is
+more modern than the 1980s-1990s era of the free TPCs, or because the
+chart borders are inconveniently placed for the scenario you're
+running.
+
 The random words are used so that charts can be uploaded to a web
 server without their names being obvious and predictable - so the URL
 can be sent to the player who needs to see it, without needing access
 controls to prevent other players from stumbling over it accidentally.
+
+You can get a unixtime with the date command:
+
+$ TZ=Asia/Dubai date -d "29 feb 1996 10am" +%s
+825573600
+
+The "engagement" turn length is taken as 15 seconds, representing a
+single movement phase.
 
 ## Units hash
 
@@ -205,8 +241,9 @@ targets.
 If the general->chart parameter is missing from the data file, a plain
 blue field will be used instead (with a Mercator-variant projection
 rather than the Lambert Conformal Conic), and plotting will be much
-faster. All functions are still available in this mode, though the
-large plot is not generated.
+faster. If the parameter is "osm", OpenStreetMap data will be
+downloaded and used. All functions are still available in these modes,
+though the larger plot is not generated.
 
 Optional parameters:
 
@@ -241,6 +278,8 @@ A-20 - descend 20 metres
 A200 - snap to altitude 200m
 Ditto for depth (D) (+ descends, - ascends)
 T1.5 - change fuel consumption rate to 1.5x base
+T0.6 - change fuel consumption rate to 1/0.6x base
+alert - print a warning message when processed
 >cDEW - change course to face DEW
 >iDEW - change course to intercept DEW
 
@@ -275,29 +314,37 @@ A unit that runs out of orders will continue on the same course and speed.
 
 Drawing objects can have the types:
 
-circle (needs lat/lon/loc or uses unit's, radius)
+circle (needs lat/lon/loc, radius)
 box (needs n, s, e, w boundaries)
-path (needs segments)
-icon (needs file)
-arc (needs lat/lon/loc or uses unit's, radius, startangle, endangle, optional minradius)
+path (needs segments, see below)
+icon (needs lat/lon/loc, image filename)
+arc (needs lat/lon/loc, radius, anglestart, angleend, optional minradius)
+
+So for example if you want to plot an ESM or sonar contact:
+
+- type: arc
+  radius: 40
+  anglestart: 75
+  angleend: 76
 
 segments can be:
-move (first only)
-line
+move (first only; lat/lon/loc)
+line (lat/lon/loc)
 arc (lat/lon/loc is centre, angle is terminating angle)
 close (closes the shape)
+
+Where an object type needs a lat/lon or loc, it will default to the
+unit's own location. You can use offsets: me+RANGE@ANGLE.
+
+The "arc" segment is a bit complex to use. The point that the path has
+reached is the start point; the location specified is the centre of
+the circle; the angle defines the end point.
 
 You need to specify a "colour" (though objects attached to units
 default to the unit's colour, which defaults to the side's colour) and
 may specify a "border" colour (ditto). Default alpha is 128 (50%). For
 a border only, specify alpha 0 or (for a path) don't close the shape.
 For shading only, specify border colour "null".
-
-For drawing objects that are anchored to units, you may use "me" in a
-loc entry: this will use the location of the parent unit. (In fact
-that's the default.) "me" can also be used as a base for offsets:
-
-me+RANGE@ANGLE
 
 ## units
 
