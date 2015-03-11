@@ -267,6 +267,8 @@ arbitrarily far into the future.
 
 100 - go 100 yards
 12 - go 12 nautical miles (if >=100, yards is assumed)
+50y - go 50 yards
+200M - go 200 nautical miles
 45kt - change speed to 45 knots
 P45 / L45 / S45 / R45 - immediately turn that many degrees port/left
                         or starboard/right

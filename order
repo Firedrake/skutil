@@ -112,13 +112,19 @@ foreach my $sidename (keys %{$y->{units}}) {
       my $xorders='';
       while (my $order=shift @orders) {
         my $hist=0;
-        if ($order =~ /^[.\d]+$/) {
+        if ($order =~ /^([.\d]+)([yM])?$/) {
           my $distance;
-          if ($order >= 100) {
-            $distance=int($order*$metresperyard+0.999);
+          my $mult;
+          if ($2) {
+            my $mult={y => $metresperyard,M => $metrespernauticalmile}->{$2};
           } else {
-            $distance=$order*$metrespernauticalmile;
+            if ($1 >= 100) {
+              $mult=$metresperyard;
+            } else {
+              $mult=$metrespernauticalmile;
+            }
           }
+          $distance=int($order*$mult+0.999);
           if ($o{v}) {
             warn "Travel $distance ($order)\n";
           }
