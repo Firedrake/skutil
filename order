@@ -113,18 +113,20 @@ foreach my $sidename (keys %{$y->{units}}) {
       while (my $order=shift @orders) {
         my $hist=0;
         if ($order =~ /^([.\d]+)([yM])?$/) {
-          my $distance;
+          my $distance=$1;
           my $mult;
-          if ($2) {
-            my $mult={y => $metresperyard,M => $metrespernauticalmile}->{$2};
+          if ($2 eq 'y') {
+            $mult=$metresperyard;
+          } elsif ($2 eq 'M') {
+            $mult=$metrespernauticalmile;
           } else {
-            if ($1 >= 100) {
+            if ($distance >= 200) {
               $mult=$metresperyard;
             } else {
               $mult=$metrespernauticalmile;
             }
           }
-          $distance=int($order*$mult+0.999);
+          $distance=int($distance*$mult+0.999);
           if ($o{v}) {
             warn "Travel $distance ($order)\n";
           }
