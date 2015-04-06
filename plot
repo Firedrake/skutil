@@ -768,7 +768,7 @@ foreach my $fromside (@sides) {
     my %line=(id => $fu1->{label},
               name => $fu0,
               speed => $fu1->{speed} || 0,
-              course => $fu1->{course},
+              course => $fu1->{course} || '',
                 );
     if (exists $fu1->{depth}) {
       $line{height}=abs($fu1->{depth}).' ['.unitband(-abs($fu1->{depth})).'] / '.abs(getdepth(map {int($_*60)} locparse($fu1)));
@@ -787,7 +787,7 @@ foreach my $fromside (@sides) {
           locparse($eu1),
             );
         $range/=$nm;
-        my $relative=$bearing-$fu1->{course};
+        my $relative=$bearing-($fu1->{course} || 0);
         while ($relative<-180) {
           $relative+=360;
         }
@@ -895,7 +895,29 @@ sub plot {
   my %d=@_;
   # img, x, y, unit, style, colour, scale
   my $sym=$d{img};
-  if ($d{style} eq 'friendly') {
+  my $rad=0.2;
+  if ($d{unit}{type} eq 'datum') {
+    $rad=0;
+    $sym->arc(x => $d{x},
+              y => $d{y},
+              r => $d{scale},
+              filled => 0,
+              color => $d{colour});
+    $sym->arc(x => $d{x},
+              y => $d{y},
+              r => $d{scale},
+              filled => 1,
+              d1 => 90,
+              d2 => 180,
+              color => $d{colour});
+    $sym->arc(x => $d{x},
+              y => $d{y},
+              r => $d{scale},
+              filled => 1,
+              d1 => 270,
+              d2 => 360,
+              color => $d{colour});
+  } elsif ($d{style} eq 'friendly') {
     if ($d{unit}{type} eq 'surface') {
       $sym->arc(x => $d{x},
                 y => $d{y},
@@ -1021,6 +1043,147 @@ sub plot {
                    y2 => 0.9*$d{scale}+$d{y});
       }
     }
+  } elsif ($d{style} eq 'unknown') {
+    if ($d{unit}{type} eq 'surface') {
+      $sym->arc(x => $d{x},
+                y => $d{y}-$d{scale}/2,
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 180,
+                d2 => 0,
+                color => $d{colour});
+      $sym->arc(x => $d{x},
+                y => $d{y}+$d{scale}/2,
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 0,
+                d2 => 180,
+                color => $d{colour});
+      $sym->arc(x => $d{x}-$d{scale}/2,
+                y => $d{y},
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 90,
+                d2 => 270,
+                color => $d{colour});
+      $sym->arc(x => $d{x}+$d{scale}/2,
+                y => $d{y},
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 270,
+                d2 => 90,
+                color => $d{colour});
+    } elsif ($d{unit}{type} =~ /^(airborne|helicopter|missile)$/) {
+      $sym->arc(x => $d{x},
+                y => $d{y}-$d{scale}/2,
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 180,
+                d2 => 0,
+                color => $d{colour});
+      $sym->arc(x => $d{x}-$d{scale}/2,
+                y => $d{y},
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 90,
+                d2 => 270,
+                color => $d{colour});
+      $sym->arc(x => $d{x}+$d{scale}/2,
+                y => $d{y},
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 270,
+                d2 => 90,
+                color => $d{colour});
+      if ($d{unit}{type} eq 'helicopter') {
+        $sym->polyline(color => $d{colour},
+                       points => [
+                         [$c60*$d{scale}+$d{x},-$s60*$d{scale}+$d{y}],
+                         [$c60*$d{scale}*1.4+$d{x},-$s60*$d{scale}*1.4+$d{y}],
+                         [$c60*$d{scale}*2+$d{x},-$s60*$d{scale}*1.4+$d{y}],
+                           ]
+                         );
+        $sym->polyline(color => $d{colour},
+                       points => [
+                         [-$c60*$d{scale}+$d{x},-$s60*$d{scale}+$d{y}],
+                         [-$c60*$d{scale}*1.4+$d{x},-$s60*$d{scale}*1.4+$d{y}],
+                         [-$c60*$d{scale}*2+$d{x},-$s60*$d{scale}*1.4+$d{y}],
+                           ]);
+      }
+    } elsif ($d{unit}{type} =~ /^(submarine|torpedo)$/) {
+      $sym->arc(x => $d{x},
+                y => $d{y}+$d{scale}/2,
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 0,
+                d2 => 180,
+                color => $d{colour});
+      $sym->arc(x => $d{x}-$d{scale}/2,
+                y => $d{y},
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 90,
+                d2 => 270,
+                color => $d{colour});
+      $sym->arc(x => $d{x}+$d{scale}/2,
+                y => $d{y},
+                r => $d{scale}/2,
+                filled => 0,
+                d1 => 270,
+                d2 => 90,
+                color => $d{colour});
+    } elsif ($d{unit}{type} =~ /^(sonobuoy|mine)$/) {
+      $sym->arc(x => $d{x},
+                y => $d{y}-$d{scale}*.35,
+                r => $d{scale}*.35,
+                filled => 0,
+                d1 => 180,
+                d2 => 0,
+                color => $d{colour});
+      $sym->arc(x => $d{x},
+                y => $d{y}+$d{scale}*.35,
+                r => $d{scale}*.35,
+                filled => 0,
+                d1 => 0,
+                d2 => 180,
+                color => $d{colour});
+      $sym->arc(x => $d{x}-$d{scale}*.35,
+                y => $d{y},
+                r => $d{scale}*.35,
+                filled => 0,
+                d1 => 90,
+                d2 => 270,
+                color => $d{colour});
+      $sym->arc(x => $d{x}+$d{scale}*.35,
+                y => $d{y},
+                r => $d{scale}*.35,
+                filled => 0,
+                d1 => 270,
+                d2 => 90,
+                color => $d{colour});
+      if ($d{unit}{type} eq 'mine') {
+        $sym->line(color => $d{colour},
+                   x1 => -0.7*$d{scale}+$d{x},
+                   y1 => $d{y},
+                   x2 => -0.9*$d{scale}+$d{x},
+                   y2 => $d{y});
+        $sym->line(color => $d{colour},
+                   x1 => 0.7*$d{scale}+$d{x},
+                   y1 => $d{y},
+                   x2 => 0.9*$d{scale}+$d{x},
+                   y2 => $d{y});
+        $sym->line(color => $d{colour},
+                   x1 => $d{x},
+                   y1 => -0.7*$d{scale}+$d{y},
+                   x2 => $d{x},
+                   y2 => -0.9*$d{scale}+$d{y});
+        $sym->line(color => $d{colour},
+                   x1 => $d{x},
+                   y1 => 0.7*$d{scale}+$d{y},
+                   x2 => $d{x},
+                   y2 => 0.9*$d{scale}+$d{y});
+      }
+    }
   } elsif ($d{style} eq 'hostile') {
     if ($d{unit}{type} eq 'surface') {
       $sym->polyline(color => $d{colour},
@@ -1107,7 +1270,6 @@ sub plot {
                    );
     }
   }
-  my $rad=0.2;
   if ($d{unit}{type} eq 'torpedo') {
     $rad=0;
     $sym->line(color => $d{colour},
@@ -1155,7 +1317,7 @@ sub plot {
                  );
   }
   my @text=($d{unit}->{label} || $d{unit}->{short} || substr(uc($d{unit}{name}),0,3)) || 'XXX';
-  if (0 && exists $d{unit}->{course}) {
+  if (0 && exists $d{unit}->{course}) { # we don't do the full data block any more
     push @text,sprintf('%03d',$d{unit}->{course});
     if ($d{unit}->{speed}<1000) {
       push @text,sprintf('%03d',$d{unit}->{speed});
