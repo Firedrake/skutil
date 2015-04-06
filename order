@@ -115,9 +115,9 @@ foreach my $sidename (keys %{$y->{units}}) {
         if ($order =~ /^([.\d]+)([yM])?$/) {
           my $distance=$1;
           my $mult;
-          if ($2 eq 'y') {
+          if ($2 && $2 eq 'y') {
             $mult=$metresperyard;
-          } elsif ($2 eq 'M') {
+          } elsif ($2 && $2 eq 'M') {
             $mult=$metrespernauticalmile;
           } else {
             if ($distance >= 200) {
