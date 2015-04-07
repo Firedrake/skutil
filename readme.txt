@@ -282,16 +282,12 @@ Ditto for depth (D) (+ descends, - ascends)
 T1.5 - change fuel consumption rate to 1.5x base
 T0.6 - change fuel consumption rate to 1/0.6x base
 alert - print a warning message when processed
->cDEW - change course to face DEW
->iDEW - change course to intercept DEW
+^cDEW - change course to face DEW
+^iDEW - change course to intercept DEW
+^25.5,52.5,10 - continue towards 25.5N,52.5E until within 10nm
 
-The latter two will need the whole stanza to be enclosed in single
-quotes:
-
-  VDQ: '27kt >iDEW'
-
-The ">c" intercept simply faces the unit to where its target was at
-the start of the turn; the ">i" one calculates the correct course for
+The "^c" intercept simply faces the unit to where its target was at
+the start of the turn; the "^i" one calculates the correct course for
 a minimum-time intercept assuming the target doesn't change course or
 speed. (It may fail, if the moving unit is too slow and too far out of
 position to intercept the target.)

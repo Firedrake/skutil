@@ -117,7 +117,7 @@ foreach my $sn (keys %{$y->{units}}) {
     if (lc($o{s}) eq lc($sn)) {
       push @sides,$sn;
     }
-  } else {
+  } elsif (exists $y->{general}{side}{$sn}{keyword}) {
     push @sides,$sn;
   }
 }
@@ -342,11 +342,21 @@ foreach my $sidename (@sides) {
       foreach my $unith (@{$y->{units}{$sideplot}}) {
         my $unitname=(keys %{$unith})[0];
         my $unit=$unith->{$unitname};
-        $unit->{colour} ||= $y->{general}{side}{$sideplot}{colour};
-        my $style=$unit->{style} || $y->{general}{side}{$sideplot}{style};
         my $plothistory=0;
         (my $id=$unitname) =~ s/[^A-Za-z]+/_/g;
-        $unit->{label}=($friendly?undef:$unit->{foreignshort}) || $unit->{short} || substr(uc($unitname),0,3);
+        unless ($friendly) {
+          $unit->{label}=$unit->{foreignshort};
+          if (exists $unit->{foreigncolour}) {
+            $unit->{colour}=$unit->{foreigncolour};
+          }
+          if (exists $unit->{foreignstyle}) {
+            $unit->{style}=$unit->{foreignstyle};
+          }
+        }
+        my $style=$unit->{style} || $y->{general}{side}{$sideplot}{style};
+        $unit->{colour} ||= $y->{general}{side}{$sideplot}{colour};
+        $unit->{label} ||= $unit->{short};
+        $unit->{label} ||= substr(uc($unitname),0,3);
         $unit->{name}=$unitname;
         my $plot=1;
         unless ($friendly) { # is the unit detected?
