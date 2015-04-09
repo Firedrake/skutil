@@ -109,7 +109,7 @@ foreach my $sidename (keys %{$y->{units}}) {
     my $track=0;
     if (length($orders)>0) {
       my @orders=split ' ',$orders;
-      my $xorders='';
+      my @xorders=();
       while (my $order=shift @orders) {
         my $hist=0;
         if ($order =~ /^([.\d]+)([yM])?$/) {
@@ -137,9 +137,9 @@ foreach my $sidename (keys %{$y->{units}}) {
             if ($tx>0) {
               unshift @orders,$tx.'s';
             }
-            $xorders=join(' ',@orders);
+            push @xorders,@orders;
             if ($o{v}) {
-              warn "New orders: $xorders\n";
+              warn "New orders: ".join(' ',@xorders)."\n";
             }
             $tm=$tl-$timetaken;
             $distance=$tm*$speed;
@@ -151,7 +151,7 @@ foreach my $sidename (keys %{$y->{units}}) {
           $timetaken+=$tm;
         } elsif ($order =~ /^\@(?<id>[A-Z0-9]{2,3})$/) {
           unless (exists $id{$+{id}}) {
-            die "$id can't refer to $+{id}\n";
+            die "jumpto: $id can't refer to $+{id}\n";
           }
           if ($o{v}) {
             warn "Jump to $+{id}\n";
@@ -160,14 +160,14 @@ foreach my $sidename (keys %{$y->{units}}) {
           foreach my $item (qw(course speed)) {
             $ship->{$item}=$id{$+{id}}{$item};
           }
-        } elsif ($order =~ /^\^(?<mode>[ic])?(?<tgt>[-.0-9]+,[-.0-9]+(,[.0-9]+)?)|(?<id>[A-Z0-9]{2,3})$/) {
+        } elsif ($order =~ /^\^(?:(?<mode>[ic])?(?<tgt>[-.0-9]+,[-.0-9]+(,[.0-9]+)?)|(?<id>[A-Z0-9]{2,3}))$/) {
           my @me=locparse($ship);
           my @target;
           my $mode=$+{mode} || 'i';
           my @parm;
           if ($+{id}) {         # ship/marker/etc.
             unless (exists $id{$+{id}}) {
-              die "$id can't refer to $+{id}\n";
+              die "intercept: $id can't refer to $+{id}\n";
             }
             @target=locparse($id{$+{id}});
             if ($o{v}) {
@@ -185,7 +185,7 @@ foreach my $sidename (keys %{$y->{units}}) {
             next;
           } else {
             unshift @orders,$order;
-            $xorders=join(' ',@orders);
+            push @xorders,@orders;
             @orders=();
             if ($o{v}) {
               warn "Heading for $+{tgt}\n";
@@ -230,9 +230,9 @@ foreach my $sidename (keys %{$y->{units}}) {
             if ($tx>0) {
               unshift @orders,"${tx}s";
             }
-            $xorders=join(' ',@orders);
+            push @xorders,@orders;
             if ($o{v}) {
-              warn "New orders: $xorders\n";
+              warn "New orders: ".join(' ',@xorders)."\n";
             }
             $tm=$tl-$timetaken;
             @orders=();
@@ -277,7 +277,7 @@ foreach my $sidename (keys %{$y->{units}}) {
             warn "Speed is $+{speed}\n";
           }
           $ship->{speed}=$+{speed};
-        } elsif ($order =~ /^A(?<mode>[-+])?(?<alt>\d+)$/) {
+        } elsif ($order =~ /^A(?<mode>[-+])?(?<alt>\d+)(?:\/(?<rate>[-\d]+))?$/) {
           if (exists $ship->{altitude}) {
             if ($+{mode}) {
               if ($+{mode} eq '+') {
@@ -286,7 +286,21 @@ foreach my $sidename (keys %{$y->{units}}) {
                 $ship->{altitude}-=$+{alt};
               }
             } else {
-              $ship->{altitude}=$+{alt};
+              if ($+{rate}) {
+                my $delta=abs($+{rate}/15*($tl-$timetaken));
+                if ($ship->{altitude}>$+{alt}) {
+                  $delta=-$delta;
+                }
+                my $eot=int($ship->{altitude}+$delta);
+                if (($delta>0 && $eot>$+{alt}) || ($delta<0 && $eot<$+{alt})) {
+                  $eot=$+{alt};
+                } else {
+                  unshift @xorders,$order;
+                }
+                $ship->{altitude}=$eot;
+              } else {
+                $ship->{altitude}=$+{alt};
+              }
             }
             if ($o{v}) {
               warn "Altitude is $ship->{altitude}\n";
@@ -338,8 +352,8 @@ foreach my $sidename (keys %{$y->{units}}) {
       }
       delete $ship->{orders};
       delete $y->{general}{orders}{$id};
-      if ($xorders) {
-        $orders=$y->{general}{orders}{$id}=$xorders;
+      if (@xorders) {
+        $orders=$y->{general}{orders}{$id}=join(' ',@xorders);
       }
     }
     if (exists $ship->{battery}) {

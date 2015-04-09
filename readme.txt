@@ -278,13 +278,14 @@ P45 / L45 / S45 / R45 - immediately turn that many degrees port/left
 A+20 - climb 20 metres
 A-20 - descend 20 metres
 A200 - snap to altitude 200m
+A2000/150 - move to altitude 2000m at 150m per 15 seconds (continuing)
 Ditto for depth (D) (+ descends, - ascends)
 T1.5 - change fuel consumption rate to 1.5x base
 T0.6 - change fuel consumption rate to 1/0.6x base
 alert - print a warning message when processed
-^cDEW - change course to face DEW
-^iDEW - change course to intercept DEW
-^25.5,52.5,10 - continue towards 25.5N,52.5E until within 10nm
+^cDEW - change course to face DEW (continuing)
+^iDEW - change course to intercept DEW (continuing)
+^25.5,52.5,10 - continue towards 25.5N,52.5E until within 10nm (continuing)
 
 The "^c" intercept simply faces the unit to where its target was at
 the start of the turn; the "^i" one calculates the correct course for
