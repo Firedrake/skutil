@@ -164,6 +164,7 @@ foreach my $sidename (keys %{$y->{units}}) {
           my @me=locparse($ship);
           my @target;
           my $mode=$+{mode} || 'i';
+          my @parm;
           if ($+{id}) {         # ship/marker/etc.
             unless (exists $id{$+{id}}) {
               die "$id can't refer to $+{id}\n";
@@ -172,24 +173,25 @@ foreach my $sidename (keys %{$y->{units}}) {
             if ($o{v}) {
               warn "Intercept $mode $+{id}\n";
             }
+            $parm[2]=1;
           } else {              # lat,lon(,range)
             $mode='c';
-            my @parm=split ',',$+{tgt};
-            $parm[2] ||= 10;
+            @parm=split ',',$+{tgt};
+            $parm[2] ||= 1;
             @target=($parm[0],$parm[1]);
-            my $r=$geo->range(@me,@target)/$metrespernauticalmile;
-            if ($r <= $parm[2]) {
-              next;
-            } else {
-              unshift @orders,$order;
-              $xorders=join(' ',@orders);
-              @orders=();
-              if ($o{v}) {
-                warn "Heading for $+{tgt}\n";
-              }
+          }
+          my $r=$geo->range(@me,@target)/$metrespernauticalmile;
+          if ($r <= $parm[2]) {
+            next;
+          } else {
+            unshift @orders,$order;
+            $xorders=join(' ',@orders);
+            @orders=();
+            if ($o{v}) {
+              warn "Heading for $+{tgt}\n";
             }
           }
-          if ($mode eq 'c') { # tail chase, i.e. direct
+          if ($mode eq 'c') {   # tail chase, i.e. direct
             $ship->{course}=int($geo->bearing(@me,@target)+.5);
           } else { # leading intercept
             my $ispeed=$ship->{speed};
