@@ -292,6 +292,14 @@ a minimum-time intercept assuming the target doesn't change course or
 speed. (It may fail, if the moving unit is too slow and too far out of
 position to intercept the target.)
 
+Why would you want the "go towards lat/long" mode, rather than just
+setting a course? Because on a sphere a course of constant bearing is
+not a straight line, and if you're going a long distance in a straight
+line your bearing will change as you go. (And the same applies if you
+have an aircraft heading home to its carrier - give an intercept
+order, and it'll keep on track no matter how the carrier changes
+course and speed.)
+
 Note that turn calculations aren't done automatically: if a medium
 ship on course 090 wants to turn to 330 at standard rudder, you need
 to put this in as:
