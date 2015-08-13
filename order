@@ -146,7 +146,7 @@ foreach my $sidename (keys %{$y->{units}}) {
             @orders=();
           }
           $track+=$distance;
-          ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
+          ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course} || 0);
           delete $ship->{loc};
           $timetaken+=$tm;
         } elsif ($order =~ /^\@(?<id>[A-Z0-9]{2,3})$/) {
@@ -160,20 +160,27 @@ foreach my $sidename (keys %{$y->{units}}) {
           foreach my $item (qw(course speed)) {
             $ship->{$item}=$id{$+{id}}{$item};
           }
-        } elsif ($order =~ /^\^(?:(?<mode>[ic])?(?<tgt>[-.0-9]+,[-.0-9]+(,[.0-9]+)?)|(?<id>[A-Z0-9]{2,3}))$/) {
+        } elsif ($order =~ /^\^(?<mode>[ic])?
+                            (?:(?<tgt>[-.0-9]+,[-.0-9]+(?:,[.0-9]+)?)|
+                              (?<id>[A-Z0-9]{2,3}(?:,[.0-9]+)?))$/x
+                                ) {
           my @me=locparse($ship);
           my @target;
           my $mode=$+{mode} || 'i';
           my @parm;
           if ($+{id}) {         # ship/marker/etc.
-            unless (exists $id{$+{id}}) {
-              die "intercept: $id can't refer to $+{id}\n";
-            }
-            @target=locparse($id{$+{id}});
-            if ($o{v}) {
-              warn "Intercept $mode $+{id}\n";
-            }
+            my $idx=$+{id};
             $parm[2]=1;
+            if ($idx =~ /(.+),(.+)/) {
+              ($idx,$parm[2])=($1,$2);
+            }
+            unless (exists $id{$idx}) {
+              die "intercept: $id can't make reference to $idx\n";
+            }
+            @target=locparse($id{$idx});
+            if ($o{v}) {
+              warn "Intercept $mode $idx\n";
+            }
           } else {              # lat,lon(,range)
             $mode='c';
             @parm=split ',',$+{tgt};
@@ -181,14 +188,16 @@ foreach my $sidename (keys %{$y->{units}}) {
             @target=($parm[0],$parm[1]);
           }
           my $r=$geo->range(@me,@target)/$metrespernauticalmile;
-          if ($r <= $parm[2]) {
+          if ($r <= $parm[2]) { # we're in range
             next;
           } else {
-            unshift @orders,$order;
+            unless ($r-$ship->{speed}*($turnlength-$timetaken)/3600 <= $parm[2]) { # we WILL BE in range after this move
+              unshift @orders,$order;
+            }
             push @xorders,@orders;
             @orders=();
             if ($o{v}) {
-              warn "Heading for $+{tgt}\n";
+              warn "Heading for ".join(',',@target)."\n";
             }
           }
           if ($mode eq 'c') {   # tail chase, i.e. direct
@@ -196,8 +205,8 @@ foreach my $sidename (keys %{$y->{units}}) {
           } else { # leading intercept
             my $ispeed=$ship->{speed};
             my ($range,$bearing)=$geo->to(@me,@target);
-            my $tspeed=$id{$+{id}}{speed};
-            my $tcourse=$id{$+{id}}{course};
+            my $tspeed=$id{$+{id}}{speed} || 0;
+            my $tcourse=$id{$+{id}}{course} || 0;
             my $brr=90-deg2rad($bearing);
             my ($tx,$ty)=map {$_*$range} (cos($brr),sin($brr));
             my $thetat=(($bearing+180-$tcourse)+180)%360-180;
@@ -239,7 +248,7 @@ foreach my $sidename (keys %{$y->{units}}) {
           }
           my $distance=$tm*$speed;
           $track+=$distance;
-          ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
+          ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course} || 0);
           delete $ship->{loc};
           $timetaken+=$tm;
         } elsif ($order =~ /^(?<dir>[LPRS])(?<delta>\d+)$/) {
@@ -365,10 +374,10 @@ foreach my $sidename (keys %{$y->{units}}) {
       if ($o{v}) {
         warn "A further $tm seconds\n";
       }
-      my $speed=$ship->{speed}/3600*$metrespernauticalmile; # m/s
+      my $speed=($ship->{speed} || 0)/3600*$metrespernauticalmile; # m/s
       my $distance=$tm*$speed;
       $track+=$distance;
-      ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course});
+      ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course} || 0);
       delete $ship->{loc};
     }
     if (exists $ship->{fuel} && exists $ship->{consumption}) {
@@ -396,6 +405,8 @@ if (exists $y->{general}{time}) {
 }
 
 if (exists $y->{general}{contacts}) {
+  my @sig=qw(large medium small vsmall stealthy);
+  my %sig=map {$sig[$_]=>$_} (0..$#sig);
   my %shortcode;
   foreach my $sideplot (keys %{$y->{units}}) {
     foreach my $unith (@{$y->{units}{$sideplot}}) {
@@ -416,17 +427,55 @@ if (exists $y->{general}{contacts}) {
   foreach my $sensor (keys %{$y->{general}{contacts}}) {
     my $su=$shortcode{$sensor} or next;
     my @sl=locparse($su);
+    my $hz=horizon($su);
     foreach my $target (keys %{$y->{general}{contacts}{$sensor}}) {
-      my $tu=$shortcode{$target} or next;
-      my @tl=locparse($tu);
-      my $range=$geo->range(@sl,@tl)/$metrespernauticalmile;
-      my $det=1;
-      my $type=0;               # fix
-      foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
-        my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
-        if ($range <= $xrange) {
-          if ($type eq 'fix') { # fix, full data
-            $tu->{detected}{$su->{side}}=1;
+      if ($target =~ /^(fix|bearing)\/(air|surface|sub)\/(.*)/) {
+        my ($type,$where,$characteristic)=($1,$2,$3);
+        if ($type eq 'fix') {
+          foreach my $sideplot (keys %{$y->{units}}) {
+            if ($sideplot eq $su->{side}) {
+              next;
+            }
+            foreach my $tunith (@{$y->{units}{$sideplot}}) {
+              my $tunitname=(keys %{$tunith})[0];
+              my $tunit=$tunith->{$tunitname};
+              if (($where eq 'air' && $tunit->{type} =~ /^(airborne|helicopter|missile)$/) ||
+                    ($where eq 'surface' && $tunit->{type} eq 'surface') ||
+                      ($where eq 'sub' && $tunit->{type} =~ /^(submarine|torpedo)$/)
+                        ) {
+                if (exists $tunit->{$characteristic} && exists $sig{$tunit->{$characteristic}}) {
+                  my $ix=$sig{$tunit->{$characteristic}};
+                  my @t=split /\//,$y->{general}{contacts}{$sensor}{$target};
+                  if (exists $tunit->{altitude} && unitband($tunit) =~ /^(VL|NoE)$/) {
+                    if ($where eq 'air') {
+                      $t[$ix]/=10;
+                    }
+                  }
+                  my $hzz=$hz+horizon($tunit);
+                  my $xrange=min($t[$ix],$hzz);
+                  my @tl=locparse($tunit);
+                  my $range=$geo->range(@sl,@tl)/$metrespernauticalmile;
+                  if ($range<=$xrange) {
+                    $tunit->{detected}{$su->{side}}=1;
+                  }
+                } else {
+                  warn "$sensor $tunitname no $characteristic\n";
+                }
+              }
+            }
+          }
+        }
+      } else {
+        my $tu=$shortcode{$target} or next;
+        my @tl=locparse($tu);
+        my $range=$geo->range(@sl,@tl)/$metrespernauticalmile;
+        my $det=1;
+        foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
+          my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
+          if ($range <= $xrange) {
+            if ($type =~ /^fix/) { # fix, full data
+              $tu->{detected}{$su->{side}}=1;
+            }
           }
         }
       }
@@ -510,4 +559,61 @@ sub battery { # units per hour
   } else {
     die "Submarine too fast at $speed!\n";
   }
+}
+
+sub horizon {
+  my $u=shift;
+  my $i=$u->{size} or return 0;
+  if (exists $u->{altitude}) {
+    $i=unitband($u);
+  } elsif (exists $u->{depth}) {
+    return 0;
+  }
+  return {
+    VH => 350,
+    H => 231.5,
+    M => 96,
+    L => 39,
+    NoE => 12,
+    VL => 12,
+    large => 14,
+    medium => 12,
+    small => 9.5,
+    vsmall => 9.5,
+  }->{$i} || 0;
+}
+
+sub unitband {
+  my $u=shift;
+  my $d=0;
+  if (exists $u->{altitude}) {
+    $d=$u->{altitude};
+  } elsif (exists $u->{depth}) {
+    $d=-$u->{depth};
+  }
+  my $band;
+  if ($d>13500) {
+    $band='VH';
+  } elsif ($d>7500) {
+    $band='H';
+  } elsif ($d>2000) {
+    $band='M';
+  } elsif ($d>100) {
+    $band='L';
+  } elsif ($d>30) {
+    $band='NoE';
+  } elsif ($d>0) {
+    $band='VL';
+  } elsif ($d>=-25) {
+    $band='P';
+  } elsif ($d>=-50) {
+    $band='S';
+  } elsif ($d>=-500) {
+    $band='I'.(1+int((-1-$d)/100));
+  } elsif ($d>=-1200) {
+    $band='D'.(int((-1-$d)/150)-2);
+  } else {
+    $band='VD';
+  }
+  return $band;
 }

@@ -23,11 +23,12 @@ use HTML::Template;
 use POSIX qw(strftime);
 
 my %o=(d => 0,h => 30,z => 'a');
-getopts('d:h:s:z:',\%o);
+getopts('d:h:s:z:v',\%o);
 # -d 1 include depth bands
 # -d 2 shade rather than label depth bands
 # -h N limit history to N minutes
 # -s side name to plot
+# -v verbose detection
 # -z zoom scale
 
 my $tiledir="$ENV{HOME}/Maps/OSM";
@@ -143,31 +144,76 @@ foreach my $sideplot (keys %{$y->{units}}) {
 }
 
 if (exists $y->{general}{contacts}) { # this should really be in order not plot
+  my @sig=qw(large medium small vsmall stealthy);
+  my %sig=map {$sig[$_]=>$_} (0..$#sig);
   foreach my $sensor (keys %{$y->{general}{contacts}}) {
     my $su=$shortcode{$sensor} or next;
     my @sl=locparse($su);
+    my $hz=horizon($su);
     foreach my $target (keys %{$y->{general}{contacts}{$sensor}}) {
-      my $tu=$shortcode{$target} or next;
-      my @tl=locparse($tu);
-      my ($range,$bearing)=$geo->to(@sl,@tl);
-      $range/=$nm;
-      foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
-        my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
-        if ($range <= $xrange) {
-          if ($type eq 'fix') { # fix, full data
-            $tu->{detected}{$su->{side}}=1;
-          } else {              # bearing
-            my @a;
-            do {
-              @a=(int(rand(4))-int(rand(4)),int(rand(4))-int(rand(4)));
-            } while ($a[0] == $a[1]);
-            ($a[0],$a[1])=map {$bearing+$_} (min(@a),max(@a));
-            push @{$su->{draw}},{type => 'arc',
-                                 radius => $xrange,
-                                 anglestart => $a[0],
-                                 angleend => $a[1],
-                                 tag => $target,
-                                 colour => $tu->{colour} || $y->{general}{side}{$tu->{side}}{colour}};
+      if ($target =~ /^(fix|bearing)\/(air|surface|sub)\/(.*)/) {
+        my ($type,$where,$characteristic)=($1,$2,$3);
+        foreach my $sideplot (keys %{$y->{units}}) {
+          if ($sideplot eq $su->{side}) {
+            next;
+          }
+          foreach my $tunith (@{$y->{units}{$sideplot}}) {
+            my $tunitname=(keys %{$tunith})[0];
+            my $tunit=$tunith->{$tunitname};
+            if (($where eq 'air' && $tunit->{type} =~ /^(airborne|helicopter|missile)$/) ||
+                  ($where eq 'surface' && $tunit->{type} eq 'surface') ||
+                    ($where eq 'sub' && $tunit->{type} =~ /^(submarine|torpedo)$/)
+                      ) {
+              if (exists $tunit->{$characteristic} && exists $sig{$tunit->{$characteristic}}) {
+                my $ix=$sig{$tunit->{$characteristic}};
+                my @t=split /\//,$y->{general}{contacts}{$sensor}{$target};
+                if (exists $tunit->{altitude} && unitband($tunit) =~ /^(VL|NoE)$/) {
+                  if ($where eq 'air') {
+                    $t[$ix]/=10;
+                  }
+                }
+                my $hzz=$hz+horizon($tunit);
+                my $xrange=min($t[$ix],$hzz);
+                my @tl=locparse($tunit);
+                my $range=$geo->range(@sl,@tl)/$nm;
+                if ($range<=$xrange) {
+                  $tunit->{detected}{$su->{side}}=1;
+                  if ($o{v}) {
+                    print "$su->{name} detects $tunit->{name} ($target)\n";
+                  }
+                }
+              } else {
+                warn "$sensor $tunitname no $characteristic\n";
+              }
+            }
+          }
+        }
+      } else {
+        my $tu=$shortcode{$target} or next;
+        my @tl=locparse($tu);
+        my ($range,$bearing)=$geo->to(@sl,@tl);
+        $range/=$nm;
+        foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
+          my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
+          if ($range <= $xrange) {
+            if ($type =~ /^fix/) { # fix, full data
+              $tu->{detected}{$su->{side}}=1;
+              if ($o{v}) {
+                print "$su->{name} detects $tu->{name} ($type)\n";
+              }
+            } elsif ($type =~ /^bearing/) { # bearing
+              my @a;
+              do {
+                @a=(int(rand(4))-int(rand(4)),int(rand(4))-int(rand(4)));
+              } while ($a[0] == $a[1]);
+              ($a[0],$a[1])=map {$bearing+$_} (min(@a),max(@a));
+              push @{$su->{draw}},{type => 'arc',
+                                   radius => $xrange,
+                                   anglestart => $a[0],
+                                   angleend => $a[1],
+                                   tag => $target,
+                                   colour => $tu->{colour} || $y->{general}{side}{$tu->{side}}{colour}};
+            }
           }
         }
       }
@@ -189,7 +235,11 @@ foreach my $sidename (@sides) {
     }
     my @boundsll;
     my %info;
-    foreach my $pass (1..(($cvt{plotmode} eq 'chart')?3:2)) {
+    my $maxpass=2;
+    if ($cvt{plotmode} eq 'chart' && $view eq '') {
+      $maxpass=3;
+    }
+    foreach my $pass (1..$maxpass) {
       # pass 1: calculation only
       # pass 2: active map
       # pass 3: full map
@@ -350,6 +400,11 @@ foreach my $sidename (@sides) {
       }
       foreach my $sideplot (keys %{$y->{units}}) {
         my $friendly=$sidename eq 'all' || ($sideplot eq $sidename);
+        if ($friendly && $pass>1 && exists $y->{general}{side}{$sideplot}{draw}) {
+          foreach my $o (@{$y->{general}{side}{$sideplot}{draw}}) {
+            gendraw($img,$ovl,$o);
+          }
+        }
         foreach my $unith (@{$y->{units}{$sideplot}}) {
           my $unitname=(keys %{$unith})[0];
           my $unit=$unith->{$unitname};
@@ -371,9 +426,9 @@ foreach my $sidename (@sides) {
           $unit->{name}=$unitname;
           my $plot=1;
           if ($friendly) { # maybe we're zoomed?
-            unless (exists $include{$unit->{short}}) {
-              $plot=0;
-            }
+#            unless (exists $include{$unit->{short}}) {
+#              $plot=0;
+#            }
           } else {  # is the non-friendly unit detected?
             $plot=0;
             if (exists $unit->{detected}) {
@@ -439,6 +494,9 @@ foreach my $sidename (@sides) {
                 last;
               }
             }
+          }
+          if ($friendly && $view ne '' && !exists $include{$unit->{short}}) {
+            $plothistory=0;
           }
           if ($plothistory>0 && exists $unit->{history}) {
             if ($friendly) {
@@ -764,9 +822,9 @@ foreach my $fromside (@sides) {
         if (exists $eu1->{detected}{$fromside} || $fromside eq 'all') {
           my $height='';
           if (exists $eu1->{depth}) {
-            $height=abs($eu1->{depth}).' ['.unitband(-abs($eu1->{depth})).'] / '.abs(getdepth(map {int($_*60)} locparse($eu1)));
+            $height=abs($eu1->{depth}).' ['.unitband($eu1).'] / '.abs(getdepth(map {int($_*60)} locparse($eu1)));
           } elsif (exists $eu1->{altitude}) {
-            $height=$eu1->{altitude}.' ['.unitband($eu1->{altitude}).'] / '.max(0,getdepth(map {int($_*60)} locparse($eu1)));
+            $height=$eu1->{altitude}.' ['.unitband($eu1).'] / '.max(0,getdepth(map {int($_*60)} locparse($eu1)));
           }
           push @eu,$tounit;
           my $id;
@@ -795,15 +853,19 @@ foreach my $fromside (@sides) {
     my $fu0=(keys %{$fromunit})[0];
     my $fu1=$fromunit->{$fu0};
     $fu1->{label}=$fu1->{short} || substr(uc($fu0),0,3);
+    my $cc=$fu1->{course} || '';
+    if ($cc !~ /\d/) {
+      $cc='';
+    }
     my %line=(id => $fu1->{label},
               name => $fu0,
               speed => $fu1->{speed} || 0,
-              course => $fu1->{course} || '',
+              course => $cc,
                 );
     if (exists $fu1->{depth}) {
-      $line{height}=abs($fu1->{depth}).' ['.unitband(-abs($fu1->{depth})).'] / '.abs(getdepth(map {int($_*60)} locparse($fu1)));
+      $line{height}=abs($fu1->{depth}).' ['.unitband($fu1).'] / '.abs(getdepth(map {int($_*60)} locparse($fu1)));
     } elsif (exists $fu1->{altitude}) {
-      $line{height}=$fu1->{altitude}.' ['.unitband($fu1->{altitude}).'] / '.max(0,getdepth(map {int($_*60)} locparse($fu1)));
+      $line{height}=$fu1->{altitude}.' ['.unitband($fu1).'] / '.max(0,getdepth(map {int($_*60)} locparse($fu1)));
     }
     my @row;
     foreach my $enemy (@eu) {
@@ -848,13 +910,13 @@ foreach my $fromside (@sides) {
   @views=map {{stub => $stub,
                  view => $_,
                    keyword => $y->{general}{side}{$fromside}{keyword},
-                 }
+                     full => ($cvt{plotmode} eq 'chart' && $_ eq ''),
+                   }
             } @views;
   $tmpl->param(enemyunit => \@eut,
                rangetable => \@rt,
                side => $fromside,
-               view => \@views,
-               full => ($cvt{plotmode} eq 'chart'));
+               view => \@views);
   open OUT,'>:encoding(UTF-8)',"$outpath/$stub.$y->{general}{side}{$fromside}{keyword}.html";
   print OUT $tmpl->output;
   close OUT;
@@ -1459,9 +1521,32 @@ sub gendraw {
       } elsif ($pt->{cmd} eq 'line') {
         push @trace,[locparse($pt,$o)];
         if (scalar @trace > 1) {
+          my $n=scalar @trace;
           my @l;
           @l=splice @trace,-2;
-          push @trace,interpolate_latlon(@l);
+          my @k=interpolate_latlon(@l);
+          push @trace,@k;
+          if ($pt->{grad}) {
+            my $increment=$nm*$pt->{grad};
+            my $used=0;
+            foreach my $ix (0..$#k-1) {
+              my ($r,$b)=$geo->to(@{$k[$ix]},@{$k[$ix+1]});
+              if ($increment-$used>$r) {
+                $used+=$r;
+                next;
+              }
+              for (my $offset=$increment-$used;$offset<=$r;$offset+=$increment) {
+                my @centre=$geo->at(@{$k[$ix]},$offset,$b);
+                my @aa=ll2xy($geo->at(@centre,0.25*$nm,$b-90));
+                my @bb=ll2xy($geo->at(@centre,0.25*$nm,$b+90));
+                $img->line(color => ($o->{border} || $o->{colour}),
+                           x1 => $aa[0],y1 => $aa[1],
+                           x2 => $bb[0],y2 => $bb[1],
+                             );
+                $used=$r-$offset+$increment;
+              }
+            }
+          }
         }
       } elsif ($pt->{cmd} eq 'arc') {
         my @c=locparse($pt,$o);
@@ -1608,8 +1693,36 @@ sub shadeband {
   return $band;
 }
 
+sub horizon {
+  my $u=shift;
+  my $i=$u->{size};
+  if (exists $u->{altitude}) {
+    $i=unitband($u);
+  } elsif (exists $u->{depth}) {
+    return 0;
+  }
+  return {
+    VH => 350,
+    H => 231.5,
+    M => 96,
+    L => 39,
+    NoE => 12,
+    VL => 12,
+    large => 14,
+    medium => 12,
+    small => 9.5,
+    vsmall => 9.5,
+  }->{$i} || 0;
+}
+
 sub unitband {
-  my $d=shift;
+  my $u=shift;
+  my $d=0;
+  if (exists $u->{altitude}) {
+    $d=$u->{altitude};
+  } elsif (exists $u->{depth}) {
+    $d=-$u->{depth};
+  }
   my $band;
   if ($d>13500) {
     $band='VH';

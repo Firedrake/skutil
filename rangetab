@@ -51,6 +51,9 @@ foreach my $toside (sort keys %{$y->{units}}) {
   foreach my $tounit (@{$y->{units}{$toside}}) {
     my $eu0=(keys %{$tounit})[0];
     my $eu1=$tounit->{$eu0};
+    if ($eu1->{type} eq 'datum') {
+      next;
+    }
     $eu1->{label}=$eu1->{short} || substr(uc($eu0),0,3);
     if (exists $eu1->{foreignshort}) {
       $eu1->{label}.='/'.$eu1->{foreignshort};
@@ -66,6 +69,9 @@ foreach my $fs (sort keys %{$y->{units}}) {
 foreach my $fromunit (@fu) {
   my $fu0=(keys %{$fromunit})[0];
   my $fu1=$fromunit->{$fu0};
+  if ($fu1->{type} eq 'datum') {
+    next;
+  }
   my $horizon=0;
   my %line=(id => $fu1->{label},
             name => $fu0,
