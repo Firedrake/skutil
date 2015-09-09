@@ -40,7 +40,7 @@ my $c30=cos(deg2rad(30));
 my $s30=sin(deg2rad(30));
 my $c60=$s30;
 my $s60=$c30;
-my $fn=Imager::Font->new(file => '/usr/share/fonts/truetype/ttf-liberation/LiberationSans-Regular.ttf',
+my $fn=Imager::Font->new(file => '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
                          size => 10,
                          utf8 => 1);
 open DEPTH,'<','map/ETOPO1/etopo1_bed_g_f4.flt';
@@ -196,23 +196,42 @@ if (exists $y->{general}{contacts}) { # this should really be in order not plot
         foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
           my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
           if ($range <= $xrange) {
-            if ($type =~ /^fix/) { # fix, full data
-              $tu->{detected}{$su->{side}}=1;
-              if ($o{v}) {
-                print "$su->{name} detects $tu->{name} ($type)\n";
+            my $det=1;
+            if ($type =~ /-d(\d+)-/) {
+              my $arc=$1;
+              my $relative=$bearing-$su->{course};
+              while ($relative<-180) {
+                $relative+=360;
               }
-            } elsif ($type =~ /^bearing/) { # bearing
-              my @a;
-              do {
-                @a=(int(rand(4))-int(rand(4)),int(rand(4))-int(rand(4)));
-              } while ($a[0] == $a[1]);
-              ($a[0],$a[1])=map {$bearing+$_} (min(@a),max(@a));
-              push @{$su->{draw}},{type => 'arc',
-                                   radius => $xrange,
-                                   anglestart => $a[0],
-                                   angleend => $a[1],
-                                   tag => $target,
-                                   colour => $tu->{colour} || $y->{general}{side}{$tu->{side}}{colour}};
+              while ($relative>180) {
+                $relative-=360;
+              }
+              if (abs($relative)>$arc) {
+                $det=0;
+              }
+            }
+            if ($det) {
+              if ($o{v}) {
+                print "$su->{name} detects $target ($type)\n";
+              }
+              if ($type =~ /^fix/) { # fix, full data
+                $tu->{detected}{$su->{side}}=1;
+                if ($o{v}) {
+                  print "$su->{name} detects $tu->{name} ($type)\n";
+                }
+              } elsif ($type =~ /^bearing/) { # bearing
+                my @a;
+                do {
+                  @a=(int(rand(4))-int(rand(4)),int(rand(4))-int(rand(4)));
+                } while ($a[0] == $a[1]);
+                ($a[0],$a[1])=map {$bearing+$_} (min(@a),max(@a));
+                push @{$su->{draw}},{type => 'arc',
+                                     radius => $xrange,
+                                     anglestart => $a[0],
+                                     angleend => $a[1],
+                                     tag => $target,
+                                     colour => $tu->{colour} || $y->{general}{side}{$tu->{side}}{colour}};
+              }
             }
           }
         }
@@ -860,7 +879,7 @@ foreach my $fromside (@sides) {
     my %line=(id => $fu1->{label},
               name => $fu0,
               speed => $fu1->{speed} || 0,
-              course => $cc,
+              course => $cc || 0,
                 );
     if (exists $fu1->{depth}) {
       $line{height}=abs($fu1->{depth}).' ['.unitband($fu1).'] / '.abs(getdepth(map {int($_*60)} locparse($fu1)));

@@ -14,7 +14,7 @@ use warnings;
 # A+#/A-#/A#: change or set altitude in metres
 # D+#/D-#/D#: change or set depth in metres
 # T#: change throttle rate to # (or 1/#, whichever is >=1)
-# air units need: consumption (kg/nm), maxspeed (knot), throttle (0-inf)
+# air units need: range (nm), maxspeed (knot), throttle (0-inf)
 
 use List::Util qw(min);
 use Math::Trig;
@@ -335,16 +335,17 @@ foreach my $sidename (keys %{$y->{units}}) {
             warn "Depth set for non-submerged unit $shipname\n";
           }
         } elsif ($order =~ /^T(?<thr>[.\d]+)$/) {
-          if (exists $ship->{fuel}) {
+          if (exists $ship->{range}) {
             $ship->{throttle}=($+{thr}>1)?$+{thr}:(1/$+{thr});
             if ($o{v}) {
               warn "Throttle is $ship->{throttle}\n";
             }
           } else {
-            warn "Throttle set for non-fuel unit $shipname\n";
+            warn "Throttle set for non-ranged unit $shipname\n";
           }
-        } elsif ($order eq 'alert') {
-          warn "Alert for $shipname\n";
+        } elsif ($order =~ /^alert(?:-(.+))?/) {
+          my $p=$1 || '';
+          warn "Alert $p for $shipname\n";
         }
         if ($hist) {
           my %r=(time => $y->{general}{time}+$timetaken);
@@ -380,17 +381,17 @@ foreach my $sidename (keys %{$y->{units}}) {
       ($ship->{lat},$ship->{lon})=$geo->at(locparse($ship),$distance,$ship->{course} || 0);
       delete $ship->{loc};
     }
-    if (exists $ship->{fuel} && exists $ship->{consumption}) {
+    if (exists $ship->{range}) {
       my $mindist=$ship->{maxspeed}/2*$metrespernauticalmile/3600*$tl;
       if ($track < $mindist) {
         $track=$mindist;
       }
-      $ship->{fuel}-=$ship->{consumption}*$track/$metrespernauticalmile*$ship->{throttle};
+      $ship->{range}-=$track/$metrespernauticalmile*$ship->{throttle};
       if ($o{v}) {
-warn "track: $track\nmindist: $mindist\nthrottle: $ship->{throttle}\nConsumption: ".$ship->{consumption}*$track/$metrespernauticalmile*$ship->{throttle}."\n";
-        warn "$shipname has ".int($ship->{fuel}/($ship->{consumption}*$track/$metrespernauticalmile*$ship->{throttle}))." turns like that left.\n";
+warn "track: $track\nmindist: $mindist\nthrottle: $ship->{throttle}\n";
+        warn "$shipname has ".int($ship->{range}/($track/$metrespernauticalmile*$ship->{throttle}))." turns like that left.\n";
       } else {
-        if ($ship->{fuel}<=0) {
+        if ($ship->{range}<=0) {
           warn "$shipname has run out of fuel.\n";
         }
       }
@@ -468,12 +469,26 @@ if (exists $y->{general}{contacts}) {
       } else {
         my $tu=$shortcode{$target} or next;
         my @tl=locparse($tu);
-        my $range=$geo->range(@sl,@tl)/$metrespernauticalmile;
-        my $det=1;
+        my ($range,$bearing)=$geo->to(@sl,@tl);
+        $range/=$metrespernauticalmile;
         foreach my $type (keys %{$y->{general}{contacts}{$sensor}{$target}}) {
           my $xrange=$y->{general}{contacts}{$sensor}{$target}{$type};
           if ($range <= $xrange) {
-            if ($type =~ /^fix/) { # fix, full data
+            my $det=1;
+            if ($type =~ /-d(\d+)-/) {
+              my $arc=$1;
+              my $relative=$bearing-$su->{course};
+              while ($relative<-180) {
+                $relative+=360;
+              }
+              while ($relative>180) {
+                $relative-=360;
+              }
+              if (abs($relative)>$arc) {
+                $det=0;
+              }
+            }
+            if ($det && $type =~ /^fix/) { # fix, full data
               $tu->{detected}{$su->{side}}=1;
             }
           }

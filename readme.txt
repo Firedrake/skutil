@@ -2,6 +2,8 @@ Skutil - Harpoon chart plotter and utility software
 
 # Introduction
 
+WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+
 This is not a neat integrated software package. This is several lumps
 of command-line code, linked together by data files in a structured
 format (YAML). You will need to edit data files by hand to use this
@@ -12,6 +14,8 @@ automated some processes.
 Also I run this on a Linux system. It'll probably work on Windows or
 MacOS boxes with perl, but I have no access to such machines and no
 way of coding for them.
+
+WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
 
 Very broadly:
 
@@ -209,8 +213,7 @@ altitude: (m)
 
 and if they use fuel (i.e. aircraft and helos but not missiles):
 
-consumption: (kg/nm)
-fuel: (kg)
+range: (nm)
 throttle: (multiplier)
 maxspeed: (knots; maximum non-afterburner speed at any altitude)
 
