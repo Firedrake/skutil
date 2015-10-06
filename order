@@ -76,7 +76,7 @@ foreach my $sidename (keys %{$y->{units}}) {
     if ($o{v}) {
       warn "\nProcessing $shipname\n";
     }
-    {
+    if ($ship->{type} ne 'datum' && $ship->{type} ne 'sonobuoy') {
       my %r=(time => $y->{general}{time});
       foreach my $term (qw(lat lon loc course speed detected)) {
         if (exists $ship->{$term}) {
@@ -278,7 +278,7 @@ foreach my $sidename (keys %{$y->{units}}) {
           }
           $hist=1;
         } elsif ($order =~ /^(?<speed>\d+)kt$/) {
-          if (exists $ship->{battery}) {
+          if (exists $ship->{battery} && $ship->{depth}>0) {
             $ship->{battery}-=($timetaken-$lsc)/3600*battery($ship->{speed});
             $lsc=$timetaken;
           }
@@ -366,7 +366,7 @@ foreach my $sidename (keys %{$y->{units}}) {
         $orders=$y->{general}{orders}{$id}=join(' ',@xorders);
       }
     }
-    if (exists $ship->{battery}) {
+    if (exists $ship->{battery} && $ship->{depth}>0) {
       $ship->{battery}-=($tl-$lsc)/3600*battery($ship->{speed});
       $lsc=$timetaken;
     }

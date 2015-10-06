@@ -841,7 +841,7 @@ foreach my $fromside (@sides) {
         if (exists $eu1->{detected}{$fromside} || $fromside eq 'all') {
           my $height='';
           if (exists $eu1->{depth}) {
-            $height=abs($eu1->{depth}).' ['.unitband($eu1).'] / '.abs(getdepth(map {int($_*60)} locparse($eu1)));
+            $height=abs($eu1->{depth}).' ['.unitband($eu1).'] / '.max(0,-getdepth(map {int($_*60)} locparse($eu1)));
           } elsif (exists $eu1->{altitude}) {
             $height=$eu1->{altitude}.' ['.unitband($eu1).'] / '.max(0,getdepth(map {int($_*60)} locparse($eu1)));
           }

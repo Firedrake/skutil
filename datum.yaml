@@ -224,6 +224,31 @@ TPC/k-8d:
     y: 5986
   par1: 9-20
   par2: 14-40
+TPC/u-19a:
+  latline: a b c
+  lonline: a d
+  a:
+    a: -57
+    o: -43
+    x: 1305
+    y: 5974
+  b:
+    a: -57
+    o: -39
+    x: 4281
+    y: 5861
+  c:
+    a: -57
+    o: -33
+    x: 8803
+    y: 6016
+  d:
+    a: -53
+    o: -43
+    x: 959
+    y: 422
+  par1: 59-40
+  par2: 54-20
 ONC/h-6:
   latline: a b c
   lonline: a d
